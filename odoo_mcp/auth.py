@@ -38,34 +38,49 @@ class MCPUser:
     username: str
     token_digest: str
     roles: frozenset[str]
+    instances: frozenset[str] = frozenset({"*"})
 
     def can_use(self, tool_name: str) -> bool:
         return any(tool_name in ROLE_TOOLS[role] for role in self.roles)
+
+    def can_access_instance(self, instance: str) -> bool:
+        return "*" in self.instances or instance in self.instances
 
 
 class UserDirectory:
     """SQLite-backed MCP identities, initially bootstrapped from a local config file."""
 
-    def __init__(self, users: Iterable[MCPUser] = (), db_path: str | None = None):
+    def __init__(self, users: Iterable[MCPUser] = (), db_path: str | None = None,
+                 instance_names: Iterable[str] | None = None):
         self.users = tuple(users)
         self.db_path = db_path
+        self.instance_names = frozenset(instance_names) if instance_names is not None else None
         if self.db_path:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as db:
                 db.execute(
                     "CREATE TABLE IF NOT EXISTS mcp_users ("
                     "username TEXT PRIMARY KEY, token_digest TEXT NOT NULL UNIQUE, "
-                    "roles_json TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)"
+                    "roles_json TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, "
+                    "instances_json TEXT NOT NULL DEFAULT '[\"*\"]')"
                 )
+                columns = {row[1] for row in db.execute("PRAGMA table_info(mcp_users)")}
+                if "instances_json" not in columns:
+                    db.execute(
+                        "ALTER TABLE mcp_users ADD COLUMN instances_json TEXT NOT NULL DEFAULT '[\"*\"]'"
+                    )
                 count = db.execute("SELECT COUNT(*) FROM mcp_users").fetchone()[0]
                 if count == 0:
                     db.executemany(
-                        "INSERT INTO mcp_users(username, token_digest, roles_json, active) VALUES (?, ?, ?, 1)",
-                        [(u.username, u.token_digest, json.dumps(sorted(u.roles))) for u in self.users],
+                        "INSERT INTO mcp_users(username, token_digest, roles_json, active, instances_json) "
+                        "VALUES (?, ?, ?, 1, ?)",
+                        [(u.username, u.token_digest, json.dumps(sorted(u.roles)),
+                          json.dumps(sorted(u.instances))) for u in self.users],
                     )
 
     @classmethod
-    def load(cls, path: str | None = None, *, required: bool = False) -> UserDirectory:
+    def load(cls, path: str | None = None, *, required: bool = False,
+             instance_names: Iterable[str] | None = None) -> UserDirectory:
         db_path = os.getenv("MCP_USER_DB")
         config_path = Path(path or os.getenv("MCP_USERS_FILE", "mcp-users.json"))
 
@@ -76,7 +91,7 @@ class UserDirectory:
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_users'"
                 ).fetchone()
                 if initialized and db.execute("SELECT COUNT(*) FROM mcp_users").fetchone()[0] > 0:
-                    return cls(db_path=db_path)
+                    return cls(db_path=db_path, instance_names=instance_names)
 
         if not config_path.exists():
             if required:
@@ -97,9 +112,11 @@ class UserDirectory:
                 raise ValueError("Each MCP user must have a username and object configuration")
             token_env = entry.get("token_env")
             roles = entry.get("roles")
+            instances = entry.get("instances", ["*"])
             if not isinstance(token_env, str) or not token_env:
                 raise ValueError(f"MCP user {username!r} must specify token_env")
             validated_roles = validate_roles(roles)
+            validated_instances = validate_instances(instances, instance_names)
             token = os.getenv(token_env, "")
             if len(token) < 32:
                 raise ValueError(f"Environment variable {token_env} must contain a token of at least 32 characters")
@@ -107,9 +124,9 @@ class UserDirectory:
             if digest in seen_digests:
                 raise ValueError("Each MCP user must have a unique bearer token")
             seen_digests.add(digest)
-            users.append(MCPUser(username, digest, validated_roles))
+            users.append(MCPUser(username, digest, validated_roles, validated_instances))
 
-        return cls(users, db_path=db_path)
+        return cls(users, db_path=db_path, instance_names=instance_names)
 
     def _connect(self) -> sqlite3.Connection:
         if not self.db_path:
@@ -121,9 +138,11 @@ class UserDirectory:
             return list(self.users)
         with self._connect() as db:
             rows = db.execute(
-                "SELECT username, token_digest, roles_json FROM mcp_users WHERE active=1 ORDER BY username"
+                "SELECT username, token_digest, roles_json, instances_json "
+                "FROM mcp_users WHERE active=1 ORDER BY username"
             ).fetchall()
-        return [MCPUser(name, digest, frozenset(json.loads(roles))) for name, digest, roles in rows]
+        return [MCPUser(name, digest, frozenset(json.loads(roles)), frozenset(json.loads(instances)))
+                for name, digest, roles, instances in rows]
 
     def authenticate(self, token: str) -> MCPUser | None:
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -134,27 +153,42 @@ class UserDirectory:
 
     def list_users(self) -> list[dict[str, object]]:
         if not self.db_path:
-            return [{"username": u.username, "roles": sorted(u.roles), "active": True} for u in self._records()]
+            return [{"username": u.username, "roles": sorted(u.roles), "active": True,
+                     "instances": sorted(u.instances)} for u in self._records()]
         with self._connect() as db:
             rows = db.execute(
-                "SELECT username, roles_json, active FROM mcp_users ORDER BY username"
+                "SELECT username, roles_json, active, instances_json FROM mcp_users ORDER BY username"
             ).fetchall()
         return [
-            {"username": name, "roles": json.loads(roles), "active": bool(active)}
-            for name, roles, active in rows
+            {"username": name, "roles": json.loads(roles), "active": bool(active),
+             "instances": json.loads(instances)}
+            for name, roles, active, instances in rows
         ]
 
-    def add_user(self, username: str, roles: object) -> str:
+    def add_user(self, username: str, roles: object, instances: object) -> str:
         normalized_name = validate_username(username)
         validated_roles = validate_roles(roles)
+        validated_instances = validate_instances(instances, self.instance_names)
         token = secrets.token_hex(32)
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         with self._connect() as db:
             db.execute(
-                "INSERT INTO mcp_users(username, token_digest, roles_json, active) VALUES (?, ?, ?, 1)",
-                (normalized_name, digest, json.dumps(sorted(validated_roles))),
+                "INSERT INTO mcp_users(username, token_digest, roles_json, active, instances_json) "
+                "VALUES (?, ?, ?, 1, ?)",
+                (normalized_name, digest, json.dumps(sorted(validated_roles)),
+                 json.dumps(sorted(validated_instances))),
             )
         return token
+
+    def update_instances(self, username: str, instances: object) -> None:
+        validated_instances = validate_instances(instances, self.instance_names)
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE mcp_users SET instances_json=? WHERE username=? AND active=1",
+                (json.dumps(sorted(validated_instances)), username),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError("User not found")
 
     def update_roles(self, username: str, roles: object) -> None:
         validated_roles = validate_roles(roles)
@@ -217,6 +251,21 @@ def validate_roles(roles: object) -> frozenset[str]:
     return frozenset(roles)
 
 
+def validate_instances(instances: object, available: Iterable[str] | None = None) -> frozenset[str]:
+    if not isinstance(instances, list) or not instances or any(not isinstance(name, str) for name in instances):
+        raise ValueError("instances must be a non-empty list of configured instance names")
+    values = {name.strip() for name in instances}
+    if "" in values:
+        raise ValueError("instance names must not be empty")
+    if "*" in values and values != {"*"}:
+        raise ValueError("'*' must be selected alone to allow all configured instances")
+    if available is not None and "*" not in values:
+        unknown_instances = values - set(available)
+        if unknown_instances:
+            raise ValueError(f"Unknown Odoo instances: {', '.join(sorted(unknown_instances))}")
+    return frozenset(values)
+
+
 def bearer_token(headers: Mapping[str, str] | None) -> str | None:
     if not headers:
         return None
@@ -229,13 +278,16 @@ def bearer_token(headers: Mapping[str, str] | None) -> str | None:
     return token.strip()
 
 
-def require_tool_access(headers: Mapping[str, str] | None, directory: UserDirectory, tool_name: str) -> MCPUser:
+def require_tool_access(headers: Mapping[str, str] | None, directory: UserDirectory,
+                        tool_name: str, instance: str | None = None) -> MCPUser:
     token = bearer_token(headers)
     user = directory.authenticate(token) if token else None
     if user is None:
         raise PermissionError("Authentication required")
     if not user.can_use(tool_name):
         raise PermissionError(f"User {user.username!r} is not allowed to use tool {tool_name!r}")
+    if instance is not None and not user.can_access_instance(instance):
+        raise PermissionError(f"User {user.username!r} is not allowed to access Odoo instance {instance!r}")
     return user
 
 

@@ -4,4 +4,11 @@
 __pycache__
 *.py[cod]
 .env
+.env.*
+local
+mcp-state
+*.sqlite3
+*.sqlite3-*
+.vscode
 odoo-instances.json
+mcp-users.json

@@ -67,6 +67,8 @@ ADMIN_PAGE = r"""<!doctype html>
     <aside id="create-panel" class="user">
       <h2>Add a user</h2>
       <label for="new-username">Username</label><input id="new-username" type="text" maxlength="64" autocomplete="off">
+      <label for="new-instances">Allowed Odoo instances</label><input id="new-instances" type="text" autocomplete="off">
+      <p class="muted" id="instance-help">Enter configured names separated by commas. Use * only when access to every instance is needed.</p>
       <div id="new-roles" class="role-groups"></div>
       <button id="create-user">Create user and generate token</button>
       <div id="created-token" class="hidden"></div>
@@ -89,6 +91,7 @@ ADMIN_PAGE = r"""<!doctype html>
     administrator: 'Todos los permisos disponibles en el MCP'
   };
   let roleGroups = [];
+  let instanceNames = [];
   const token = () => sessionStorage.getItem(tokenKey) || '';
   const api = async (path, options = {}) => {
     const response = await fetch('/admin/api' + path, {
@@ -100,6 +103,10 @@ ADMIN_PAGE = r"""<!doctype html>
     return data;
   };
   const selectedRoles = container => [...container.querySelectorAll('input:checked')].map(input => input.value);
+  const parseInstances = input => {
+    const value = input.value.trim();
+    return value === '*' ? ['*'] : value.split(',').map(name => name.trim()).filter(Boolean);
+  };
   const drawRoleBoxes = (container, chosen = []) => {
     container.replaceChildren();
     container.classList.add('role-groups');
@@ -131,6 +138,15 @@ ADMIN_PAGE = r"""<!doctype html>
         catch (error) { message.textContent = error.message; }
       });
       card.append(heading, roleBox, save);
+      const instanceLabel = document.createElement('label'); instanceLabel.textContent = 'Allowed Odoo instances';
+      const instanceInput = document.createElement('input'); instanceInput.type = 'text';
+      instanceInput.value = (user.instances || ['*']).join(', '); instanceInput.autocomplete = 'off';
+      const instanceSave = document.createElement('button'); instanceSave.textContent = 'Save instance access'; instanceSave.className = 'secondary';
+      instanceSave.addEventListener('click', async () => {
+        try { await api('/users/' + encodeURIComponent(user.username) + '/instances', { method: 'PUT', body: JSON.stringify({instances: parseInstances(instanceInput)}) }); await loadUsers(); message.textContent = 'Instance access saved.'; }
+        catch (error) { message.textContent = error.message; }
+      });
+      card.append(instanceLabel, instanceInput, instanceSave);
       const rotate = document.createElement('button'); rotate.textContent = 'Rotate token'; rotate.className = 'secondary';
       rotate.addEventListener('click', async () => {
         if (!confirm('Replace the token for ' + user.username + '? Their old token will stop working immediately.')) return;
@@ -162,7 +178,9 @@ ADMIN_PAGE = r"""<!doctype html>
   };
   const enter = async () => {
     try {
-      const data = await api('/roles'); roleGroups = data.groups;
+      const [data, instances] = await Promise.all([api('/roles'), api('/instances')]);
+      roleGroups = data.groups; instanceNames = instances.instances;
+      document.querySelector('#instance-help').textContent = 'Configured: ' + instanceNames.join(', ') + '. Use * only when access to every instance is needed.';
       drawRoleBoxes(document.querySelector('#new-roles'), ['viewer']);
       await loadUsers(); login.classList.add('hidden'); app.classList.remove('hidden');
       document.querySelector('#login-error').textContent = '';
@@ -182,7 +200,8 @@ ADMIN_PAGE = r"""<!doctype html>
     const chosen = selectedRoles(document.querySelector('#new-roles'));
     const output = document.querySelector('#created-token'); output.replaceChildren(); output.classList.add('hidden');
     try {
-      const data = await api('/users', { method: 'POST', body: JSON.stringify({username, roles: chosen}) });
+      const instances = parseInstances(document.querySelector('#new-instances'));
+      const data = await api('/users', { method: 'POST', body: JSON.stringify({username, roles: chosen, instances}) });
       const note = document.createElement('p'); note.textContent = 'Copy this token now. It will not be shown again.';
       const value = document.createElement('p'); value.className = 'token'; value.textContent = data.token;
       const copy = document.createElement('button'); copy.textContent = 'Copy token'; copy.addEventListener('click', async () => { await navigator.clipboard.writeText(data.token); copy.textContent = 'Copied'; });
@@ -208,7 +227,9 @@ async def _authorized_admin(request: Request, directory: UserDirectory):
     return user, None
 
 
-def create_admin_routes(directory: UserDirectory) -> list[Route]:
+def create_admin_routes(directory: UserDirectory, instance_names=()) -> list[Route]:
+    configured_instances = sorted(set(instance_names))
+
     async def page(request: Request) -> Response:
         return HTMLResponse(ADMIN_PAGE)
 
@@ -224,13 +245,19 @@ def create_admin_routes(directory: UserDirectory) -> list[Route]:
             return error
         return JSONResponse({"users": directory.list_users()})
 
+    async def list_instances(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        return JSONResponse({"instances": configured_instances})
+
     async def create_user(request: Request) -> Response:
         _, error = await _authorized_admin(request, directory)
         if error:
             return error
         try:
             body = await request.json()
-            token = directory.add_user(body.get("username"), body.get("roles"))
+            token = directory.add_user(body.get("username"), body.get("roles"), body.get("instances"))
         except (ValueError, TypeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         except Exception as exc:
@@ -246,6 +273,19 @@ def create_admin_routes(directory: UserDirectory) -> list[Route]:
         try:
             body = await request.json()
             directory.update_roles(request.path_params["username"], body.get("roles"))
+        except KeyError:
+            return JSONResponse({"detail": "User not found"}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"updated": True})
+
+    async def update_instances(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        try:
+            body = await request.json()
+            directory.update_instances(request.path_params["username"], body.get("instances"))
         except KeyError:
             return JSONResponse({"detail": "User not found"}, status_code=404)
         except (ValueError, TypeError) as exc:
@@ -278,8 +318,10 @@ def create_admin_routes(directory: UserDirectory) -> list[Route]:
         Route("/admin", page, methods=["GET"]),
         Route("/admin/", page, methods=["GET"]),
         Route("/admin/api/roles", list_roles, methods=["GET"]),
+        Route("/admin/api/instances", list_instances, methods=["GET"]),
         Route("/admin/api/users", list_users, methods=["GET"]),
         Route("/admin/api/users", create_user, methods=["POST"]),
+        Route("/admin/api/users/{username:str}/instances", update_instances, methods=["PUT"]),
         Route("/admin/api/users/{username:str}", update_user, methods=["PATCH"]),
         Route("/admin/api/users/{username:str}", revoke_user, methods=["DELETE"]),
         Route("/admin/api/users/{username:str}/rotate-token", rotate_token, methods=["POST"]),

@@ -4,7 +4,7 @@ services:
     container_name: odoo-mcp
     restart: unless-stopped
     env_file:
-      - .env
+      - ${MCP_CONNECTIONS_DIR:-./local}/.env
     ports:
       - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8000}:8000"
     environment:
@@ -18,13 +18,10 @@ services:
       - odoo_instances
       - mcp_users
     volumes:
-      - mcp_state:/data
+      - ${MCP_CONNECTIONS_DIR:-./local}/mcp-state:/data
 
 secrets:
   odoo_instances:
-    file: ${ODOO_INSTANCES_FILE:-./odoo-instances.json}
+    file: ${MCP_CONNECTIONS_DIR:-./local}/odoo-instances.json
   mcp_users:
-    file: ${MCP_USERS_CONFIG_FILE:-./mcp-users.json}
-
-volumes:
-  mcp_state:
+    file: ${MCP_CONNECTIONS_DIR:-./local}/mcp-users.json

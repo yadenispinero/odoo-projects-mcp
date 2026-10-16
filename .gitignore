@@ -3,6 +3,11 @@
 !.env.example
 odoo-instances.json
 mcp-users.json
+/local/
+/mcp-state/
+*.sqlite3
+*.sqlite3-*
+.vscode/
 __pycache__/
 .pytest_cache/
 .venv/

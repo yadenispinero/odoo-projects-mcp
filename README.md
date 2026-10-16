@@ -1,57 +1,105 @@
-# Odoo Projects and Website MCP
+# Odoo Projects MCP
 
-Initial MCP server for a named Odoo 19 target. The Docker Compose service requires a bearer token for every MCP request and binds to `127.0.0.1:8000`. Do not expose it publicly until HTTPS and a suitable remote identity provider or authenticated reverse proxy are configured.
+An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, and website pages.
 
-## Current tools
+> **Portfolio project:** demonstrates integration planning, API discovery, scoped tool design, role-based access, Docker deployment, and security trade-off documentation. It is a prototype and has not been independently audited or certified for regulatory compliance.
 
-- `check_odoo_connection`: read-only Odoo version check; does not use an API key.
-- Project and task search/read tools.
-- Task create/update tools.
-- Website page search/read, content update, publish, and unpublish tools.
+## The problem
 
-All tools require a configured MCP user token and Odoo instance name (`testing` in the starter configuration). JSON-2 requests require the Odoo API key from a user with appropriate limited permissions. MCP roles restrict tools before Odoo is called; Odoo permissions and record rules remain a second authorization layer.
+Business teams want to use AI assistants and automation with the project and website data already held in Odoo. Giving an AI client generic database or model access would be too broad. This service exposes named operations with explicit inputs and field allowlists, while Odoo's own permissions remain in force.
 
-### MCP users and roles
+## Architecture
 
-The local administration page is `http://127.0.0.1:8000/admin`. Sign in with the initial `owner` token from `.env`. It lets an administrator add users, assign roles, change roles, rotate a token, and revoke access. A newly created or rotated token is shown once; copy it to that person's MCP client. The admin page keeps the owner token in the current browser tab only.
+```mermaid
+flowchart LR
+  AI[AI client] -->|Streamable HTTP + bearer token| MCP[MCP server]
+  WF[Workflow client] -->|Streamable HTTP + bearer token| MCP
+  MCP -->|Named tools, role checks| ODOO[Selected Odoo instance]
+  MCP -->|Odoo JSON-2 over HTTPS| ODOO
+  ADMIN[Local access admin page] -->|Admin role required| USERS[(SQLite user directory)]
+```
 
-On first startup, copy `mcp-users.example.json` to the ignored local file `mcp-users.json` and set distinct random values of at least 32 characters in `.env` for `MCP_TOKEN_OWNER` and `MCP_TOKEN_N8N`. The initial users are `owner` with all current tools and `n8n` with read access plus task create/update. The service seeds these identities into its persistent SQLite volume. After that, manage users in the webpage; changes take effect immediately and user tokens are stored as SHA-256 digests.
+The operator selects a configured Odoo instance on each tool call. The server does not expose arbitrary SQL or a generic model-call tool. Odoo API credentials stay on the server.
 
-Available roles:
+## Current capabilities
 
-- `viewer`: connection check and project, task, and page search/read.
-- `task_editor`: create and update tasks.
-- `project_manager`: search, read, create, and update projects.
-- `website_editor`: edit page content.
-- `publisher`: publish and unpublish pages.
-- `administrator`: all currently registered tools.
+- Search and read projects and tasks.
+- Create and update projects and tasks with validated fields.
+- Search and read website pages, update page content, and publish or unpublish with separate tools.
+- Authenticate MCP users with bearer tokens and grant permissions through named roles.
+- Manage users, roles, token rotation, and revocation in a local admin page.
+- Connect to Odoo 19 through its JSON-2 API over HTTPS.
 
-The database stores only SHA-256 digests of MCP bearer tokens, not the tokens themselves. Initial tokens are read from environment variables at first startup and must never be committed. The administration page and MCP service are currently local-only; this setup uses static bearer tokens, not an OAuth login flow. The Odoo API key is still shared by requests to the configured instance, so Odoo audit entries identify the technical Odoo account.
+## Security model and current limits
 
-## Configure and run
+- MCP roles restrict tool access and each user can be restricted to named Odoo instances; Odoo permissions and record rules provide a second authorization layer.
+- The Odoo instance name is selected explicitly, and the configured URL must use HTTPS.
+- The default Compose binding is `127.0.0.1`; this is a local development setup, not a public deployment recipe.
+- Existing SQLite users keep all-instance access during schema migration to preserve current behavior. Review and narrow each user's allowed instances before adding another Odoo target.
+- Tokens are static bearer tokens. There is no OAuth/OIDC flow, rate limiting, or production audit trail yet.
+- The same configured Odoo technical account is used for calls to a target, so Odoo does not attribute each MCP action to a distinct human user.
+- The admin page is intended for local use. Remote use requires a deliberate identity, HTTPS, session, and deployment security design.
+- No GDPR, AI Act, NIS2, or other compliance certification or conclusion is claimed. Applicability and controls depend on the deployment, data, purpose, and parties involved.
 
-1. Copy `odoo-instances.example.json` to the ignored local file `odoo-instances.json` and set the URL/database for your instance. The local copy in this workspace already points at `https://odoo.example.com`.
-2. Copy `.env.example` to the ignored local file `.env` and set `ODOO_TESTING_API_KEY` plus distinct random bearer tokens for the MCP users. Keep all keys out of source files and chat messages.
-3. Copy `mcp-users.example.json` to the ignored local file `mcp-users.json`.
-4. Start or refresh the service:
+See [Architecture](docs/ARCHITECTURE.md), [Threat model](docs/THREAT_MODEL.md), and [Data protection notes](docs/DATA_PROTECTION.md) for assumptions and open work.
+
+## Run locally
+
+Requirements: Docker Compose and an Odoo instance with the JSON-2 API available.
+
+1. Set up Compose configuration and a private connection directory. For the local default:
+
+   ```sh
+   cp compose.env.example .env
+   mkdir -p local
+   cp .env.example local/.env
+   cp odoo-instances.example.json local/odoo-instances.json
+   cp mcp-users.example.json local/mcp-users.json
+   ```
+
+2. Set an Odoo API key and unique random MCP tokens of at least 32 characters in `local/.env`. Set the URL and API-key environment variable name in `local/odoo-instances.json`. In `local/mcp-users.json`, grant each user only the configured instance names they need; `*` means every configured instance.
+3. Start the service:
 
    ```sh
    docker compose up -d --build
    ```
 
-The MCP endpoint is `http://127.0.0.1:8000/mcp`. Every client must send `Authorization: Bearer <its MCP token>` on MCP requests. Odoo credentials remain server-side.
+The MCP endpoint is `http://127.0.0.1:8000/mcp`; the local admin page is `http://127.0.0.1:8000/admin`. The configured `owner` token is used to sign in. User tokens are shown once when created or rotated. Local config, SQLite state, and `.env` files are ignored by Git and Docker build context.
 
-## Run tests
+When upgrading an existing SQLite user database, the schema adds the instance allowlist while preserving existing access as `*`. After starting the upgraded service, use the admin page to replace `*` with explicit instance names for each account before configuring additional Odoo targets.
 
-Build and run the unit tests plus a read-only live Odoo version probe:
+To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the ignored project-root `.env` to the private configuration directory. Keep the API key and initial user tokens in that private directory's `.env`. The Compose file defaults to `./local` for a fresh clone.
+
+## Roles
+
+| Role | Tools |
+| --- | --- |
+| `viewer` | Connection check and project, task, and page search/read |
+| `task_editor` | Create and update tasks |
+| `project_manager` | Search, read, create, and update projects |
+| `website_editor` | Edit page content |
+| `publisher` | Publish and unpublish pages |
+| `administrator` | All currently registered tools and user administration |
+
+Roles can be combined for a user. Instance access is configured separately per user. New users in the admin page must receive explicit instance names; use `*` only when they need every configured instance.
+
+## Development
+
+Run the unit suite in Docker:
 
 ```sh
-docker build -f Dockerfile.test -t mcp-odoo-test .
-docker run --rm -e ODOO_TEST_BASE_URL=https://odoo.example.com mcp-odoo-test
+docker build -f Dockerfile.test -t odoo-projects-mcp-test .
+docker run --rm odoo-projects-mcp-test
 ```
 
-The live probe checks `GET /web/version`; it does not read or change Odoo records. Tests for authenticated reads and writes are still pending an API key and an agreed disposable test record.
+An opt-in, read-only version probe is available by setting `ODOO_TEST_BASE_URL` for the test container. It checks `/web/version`; it does not validate authenticated reads, writes, or tenant isolation. These are documented validation gaps.
 
-## Odoo API
+## Project status
 
-The connector uses Odoo 19's JSON-2 endpoint (`/json/2/<model>/<method>`) with Bearer API-key authentication and optional `X-Odoo-Database`. See [Odoo 19 External JSON-2 API documentation](https://www.odoo.com/documentation/19.0/developer/misc/api/external_api.html). Odoo's hosted service documents external API access as plan-restricted; this test target was confirmed reachable and reported Odoo 19.0. The authenticated model calls still need verification against the target's `/doc` page and configured user permissions.
+The prototype has been exercised against an Odoo 19 Community test instance. The authenticated Odoo operations, multi-instance isolation, remote identity, audit retention, and production deployment controls still need a repeatable verification plan before production use.
+
+The project plan and decisions are in [claude.md](claude.md). The next engineering priorities are per-user instance scoping, security/audit controls, and automated CI checks.
+
+## License
+
+This project is licensed under LGPL-3.0. The license was chosen to align with Odoo Community's license; this connector is a separate project and does not contain Odoo source code. See [LICENSE](LICENSE).

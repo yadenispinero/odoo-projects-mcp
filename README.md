@@ -14,7 +14,7 @@ All tools require the configured instance name (`testing` in the starter configu
 ## Configure and run
 
 1. Copy `odoo-instances.example.json` to the ignored local file `odoo-instances.json` and set the URL/database for your instance. The local copy in this workspace already points at `https://odoo.example.com`.
-2. Set `ODOO_TESTING_API_KEY` in the environment used by Docker Compose. Keep the key out of source files and chat messages.
+2. Copy `.env.example` to the ignored local file `.env` and put the API key in `ODOO_TESTING_API_KEY`. Keep the key out of source files and chat messages.
 3. Start or refresh the service:
 
    ```sh

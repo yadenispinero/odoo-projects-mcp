@@ -25,9 +25,10 @@ This is a working threat model for the prototype, not a security assessment or c
 | Stolen MCP token | Per-user tokens, role checks, token rotation and revocation | Expiry, rate limits, monitoring, and remote identity integration |
 | Excessive tool access | Named tools, role-to-tool mapping, and per-user instance allowlists | Add automated authorization-matrix checks and verify revocation/role changes under load |
 | Arbitrary database access | No generic SQL or model-call tool; model/method/fields are set by code | Keep allowlists covered by security tests during future tool additions |
-| Unauthorized Odoo access | Server-side API key, HTTPS-only configured URL, Odoo ACLs/record rules | Per-customer technical identities and credential rotation strategy |
+| Unauthorized Odoo access | Server-side API key, HTTPS-only configured URL, Odoo ACLs/record rules, authenticated credential test on instance setup | Per-customer technical identities and credential rotation strategy |
 | Accidental page publication or overwrite | Separate editor and publisher roles; publish/unpublish are explicit tools | Add change preview, confirmation workflow, and recovery/versioning guidance |
 | Secret exposure in repository or image | Example templates; local files are ignored and excluded from Docker context | Run full-history secret scanning before publication and automate secret scanning in CI |
+| Odoo API key exposure from host storage | Instance store is outside Git and written with owner-only file permissions | Application-level encryption and automated secure backup/restore are not implemented; protect the host directory and its backups |
 | Sensitive data in logs | Odoo error response bodies are not returned to callers | Define structured audit events and retention; verify logs never contain tokens or page bodies |
 | Cross-customer data exposure | Explicit instance name required and checked against the caller's allowlist | Migrated users retain wildcard access for compatibility until an administrator narrows it; admin management is global and allowlist behavior needs automated isolation checks |
 | Compromised service host | Localhost-only Compose port binding by default | Non-root container, restricted filesystem/capabilities, host hardening, backup and incident procedures |

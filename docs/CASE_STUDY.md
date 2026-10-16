@@ -31,7 +31,7 @@ Build a standalone service that exposes a small set of useful Odoo operations to
 ## Delivery so far
 
 - Implemented project, task, and website-page read/write tools.
-- Added role-based MCP users and a browser-based local user/role management page.
+- Added role-based MCP users and a local administration page for user roles and Odoo connections.
 - Added per-user allowlists for configured Odoo instances, including management through the local admin page.
 - Added Docker Compose packaging and separated the developer's private connection files from the project directory.
 - Documented architecture, threat assumptions, data-protection questions, and remaining work.

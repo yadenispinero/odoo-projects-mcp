@@ -12,6 +12,7 @@ services:
       MCP_PORT: 8000
       MCP_PATH: /mcp
       ODOO_INSTANCES_FILE: /run/secrets/odoo_instances
+      ODOO_INSTANCES_STORE: /data/odoo-instances.json
       MCP_USERS_FILE: /run/secrets/mcp_users
       MCP_USER_DB: /data/mcp-users.sqlite3
     secrets:

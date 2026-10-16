@@ -6,7 +6,7 @@
 2. **MCP service:** validates the token, maps it to roles, checks tool authorization, validates inputs, and selects an explicitly named Odoo target.
 3. **Odoo connector:** sends a fixed model/method call to the configured JSON-2 endpoint over HTTPS, using a server-side API key.
 4. **Odoo:** applies its own access rights and record rules. This is the final data authorization layer.
-5. **Access administration:** a local web page manages users and roles in SQLite. It is intended for local administration only.
+5. **Access administration:** a local web page manages users and roles in SQLite and Odoo connections in a private JSON store. It is intended for local administration only.
 
 ## Trust boundaries
 
@@ -40,16 +40,18 @@ Tools are specific to projects, tasks, and website pages. Each tool owns its mod
 
 ## Configuration
 
-- `odoo-instances.json` maps an operator-defined instance name to an HTTPS base URL, optional database, and the name of the environment variable holding its API key.
-- `mcp-users.json` bootstraps the initial MCP identities, tool roles, and allowed instance names. `*` grants all configured instances.
-- Environment variables hold initial tokens and Odoo API keys.
+- `odoo-instances.json` is the read-only bootstrap file. On first startup, its HTTPS URL, optional database, and resolved API key are copied to `mcp-state/odoo-instances.json` outside the repository. The private store is written with mode `0600`; subsequent changes use the admin page.
+- `mcp-users.json` bootstraps the initial MCP identities, tool roles, and allowed instance names. `*` grants all current and future instances.
+- Environment variables hold initial tokens and Odoo API keys used during bootstrap. Once the private instance store exists, API key changes must be made through the administration page.
 - SQLite holds active/revoked user records and token digests after initial bootstrap.
+- The admin page can add, edit, test, deactivate, and reactivate instances. Creating or editing requires a successful minimal authenticated read; the server repeats that check during create/update requests. Removing a key requires deactivation, and keyless instances cannot be reactivated. The API key is never returned to the browser after saving.
 - Docker Compose defaults to an ignored `./local` directory. Operators may set `MCP_CONNECTIONS_DIR` in their ignored Compose `.env` to keep configuration outside the repository.
 
 ## Known design constraints
 
 - Each MCP user has an instance allowlist, enforced on every tool call. The administrator role and admin page are still global to this service; this is a single-operator design, not tenant-separated administration.
-- Existing SQLite users migrate with their previous all-instance behavior for compatibility; operators should review and narrow each account in the admin page before adding more Odoo targets.
+- Existing SQLite users migrate with their previous all-instance behavior for compatibility. A wildcard user also receives access to instances added later; the admin page warns about this and operators should narrow scopes as needed.
+- Odoo API keys in the persistent instance store are plaintext protected by filesystem permissions, not application-level encryption. Restrict access to the host data directory and include it only in encrypted, access-controlled backups.
 - A shared technical Odoo identity means Odoo's audit trail does not identify each MCP user.
 - The current web administration and static bearer token design is for local use. Remote access requires a separate identity and session design.
 - Audit events, retention, backup, and recovery behavior need to be designed and implemented before production deployment.

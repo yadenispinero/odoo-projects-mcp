@@ -20,8 +20,9 @@ This file tracks engineering scope and decisions. It is not a compliance stateme
 - Configurable named Odoo instances; a client names the target on each call.
 - Project, task, and website-page tools with input and field validation.
 - Bearer-token users, role-to-tool access control, token rotation/revocation, and a local admin page.
+- Add, edit, credential-test, deactivate, and reactivate Odoo connections from the local admin page; create/update re-test credentials server-side before persisting, and keys persist outside the source tree.
 - Per-user allowlists for configured Odoo instances, editable in the local admin page.
-- Existing SQLite users retain wildcard instance access during migration to preserve current behavior; an administrator should narrow their assignments before configuring additional Odoo targets.
+- Existing SQLite users retain wildcard instance access during migration to preserve current behavior; wildcard access includes instances added later, so administrators should review scopes as targets are added.
 - SQLite persistence for user/token-digest records.
 - Docker Compose local deployment, bound to loopback by default.
 - Unit tests for configuration, Odoo API behavior, and server input constraints.
@@ -55,8 +56,8 @@ This file tracks engineering scope and decisions. It is not a compliance stateme
 ## Next work sequence
 
 1. Review old Git history for local paths/test-host references before making the repository public; current working files are sanitized.
-2. Add and verify an authorization matrix for per-user instance scoping.
+2. Add repeatable tests for instance lifecycle, credentials, and per-user scope updates.
 3. Design and implement privacy-safe audit events and retention configuration.
-4. Harden runtime, secret handling, and admin access.
+4. Harden runtime, secret handling, and admin access; evaluate encrypted credential storage.
 5. Add CI and security scanning.
 6. Prepare a repeatable staging demo and portfolio case study.

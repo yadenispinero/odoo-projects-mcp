@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from .admin import create_admin_routes
 from .auth import BearerAuthMiddleware, UserDirectory, require_tool_access
-from .config import OdooInstance, load_instances
+from .config import InstanceDirectory, OdooInstance, load_instances
 from .odoo_api import OdooApiError, OdooJson2
 
 MAX_LIMIT = 100
@@ -311,10 +311,22 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 def main() -> None:
     import uvicorn
 
-    instances = load_instances()
-    users = UserDirectory.load(required=True, instance_names=instances.keys())
+    source_instances = load_instances()
+    instance_directory = InstanceDirectory(
+        os.getenv("ODOO_INSTANCES_STORE", "/data/odoo-instances.json"), source_instances
+    )
+    instances = instance_directory.active_instances()
+    users = UserDirectory.load(required=True, instance_names=instance_directory.names(active_only=False))
     mcp = create_server(instances=instances, users=users)
     app = mcp.streamable_http_app()
-    app.router.routes.extend(create_admin_routes(users, instances.keys()))
+
+    def refresh_instances(active_instances):
+        instances.clear()
+        instances.update(active_instances)
+
+    app.router.routes.extend(create_admin_routes(
+        users, instances.keys(), instance_directory=instance_directory,
+        on_instances_changed=refresh_instances,
+    ))
     app.add_middleware(BearerAuthMiddleware, directory=users, mcp_path=os.getenv("MCP_PATH", "/mcp"))
     uvicorn.run(app, host=os.getenv("MCP_HOST", "127.0.0.1"), port=int(os.getenv("MCP_PORT", "8000")))

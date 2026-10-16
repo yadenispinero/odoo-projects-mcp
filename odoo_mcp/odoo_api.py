@@ -29,6 +29,12 @@ class OdooJson2:
         except (httpx.HTTPError, ValueError) as exc:
             raise OdooApiError("Could not read Odoo version endpoint") from exc
 
+    async def test_credentials(self) -> None:
+        """Check the configured credential/database with a minimal authenticated read."""
+        result = await self.search_read("project.project", [], ["id"], 1)
+        if not isinstance(result, list):
+            raise OdooApiError("Odoo returned an unexpected credential-check response")
+
     async def call(self, model: str, method: str, payload: dict[str, Any]) -> Any:
         if not self.instance.api_key:
             raise OdooApiError("No API key is configured for this Odoo instance")

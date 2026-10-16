@@ -5,6 +5,8 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from .auth import UserDirectory, bearer_token
+from .config import InstanceDirectory
+from .odoo_api import OdooApiError, OdooJson2
 
 
 ROLE_GROUPS = [
@@ -20,15 +22,20 @@ ADMIN_PAGE = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Odoo MCP · User access</title>
+  <title>Odoo MCP · Administration</title>
   <style>
     :root { color-scheme: light; font: 16px system-ui, sans-serif; color: #182230; background: #f3f5f8; }
-    body { margin: 0 auto; max-width: 920px; padding: 32px 18px 64px; }
+    body { margin: 0 auto; max-width: 1160px; padding: 32px 18px 64px; }
     h1 { margin-bottom: 4px; } .muted { color: #596579; }
     section, .user { background: white; border: 1px solid #d8dee8; border-radius: 10px; padding: 20px; margin: 18px 0; }
-    #app.admin-layout { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); grid-template-areas: "toolbar toolbar" "add users"; gap: 0 20px; align-items: start; }
+    #app.admin-layout { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); grid-template-areas: "toolbar toolbar" "instances instances" "add users"; gap: 0 20px; align-items: start; }
     #app.admin-layout.hidden { display: none; }
     #toolbar { grid-area: toolbar; }
+    #instances-panel { grid-area: instances; }
+    #instance-layout { display: grid; grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .instance-card { border: 1px solid #d8dee8; border-radius: 8px; padding: 14px; margin: 12px 0; background: #fbfcfe; }
+    .instance-card h3 { margin: 0 0 6px; }
+    .instance-meta { overflow-wrap: anywhere; margin: 5px 0; }
     #create-panel { grid-area: add; position: sticky; top: 16px; }
     #users-panel { grid-area: users; min-width: 0; }
     .revoked-list { margin: 18px 0; padding: 14px 18px; background: white; border: 1px solid #d8dee8; border-radius: 8px; }
@@ -47,15 +54,16 @@ ADMIN_PAGE = r"""<!doctype html>
     .error { color: #a32626; white-space: pre-wrap; } .user h3 { margin: 0; }
     @media (max-width: 760px) {
       body { padding: 18px 12px 40px; }
-      #app.admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "users" "add"; }
+      #app.admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "instances" "users" "add"; }
+      #instance-layout { grid-template-columns: minmax(0, 1fr); }
       #create-panel { position: static; }
       section, .user { padding: 15px; }
     }
   </style>
 </head>
 <body>
-  <h1>Odoo MCP user access</h1>
-  <p class="muted">Manage named MCP users and the tools each role can use. Odoo’s own permissions still apply.</p>
+  <h1>Odoo MCP administration</h1>
+  <p class="muted">Manage Odoo connections, named MCP users, and the tools each role can use. Odoo’s own permissions still apply.</p>
   <section id="login">
     <h2>Administrator sign in</h2>
     <p class="muted">Enter the existing owner Bearer token. It is kept in this browser tab only.</p>
@@ -64,6 +72,25 @@ ADMIN_PAGE = r"""<!doctype html>
   </section>
   <main id="app" class="hidden admin-layout">
     <div id="toolbar"><button id="sign-out" class="secondary">Sign out</button></div>
+    <section id="instances-panel">
+      <h2>Odoo instances</h2>
+      <p class="muted">Instance connections are stored outside the project source, in the private MCP data directory. API keys are never displayed after saving.</p>
+      <p id="wildcard-warning" class="muted"></p>
+      <div id="instance-layout">
+        <div>
+          <h3 id="instance-form-title">Add an instance</h3>
+          <label for="instance-name">Instance name</label><input id="instance-name" type="text" maxlength="64" autocomplete="off">
+          <label for="instance-url">Odoo base URL (HTTPS)</label><input id="instance-url" type="text" placeholder="https://odoo.example.com" autocomplete="url">
+          <label for="instance-database">Database (optional)</label><input id="instance-database" type="text" autocomplete="off">
+          <label for="instance-api-key">Odoo API key</label><input id="instance-api-key" type="password" autocomplete="new-password">
+          <p class="muted">When editing, leave the key blank to keep the saved key. Remove a saved key only after deactivating that instance.</p>
+          <label class="muted"><input id="clear-instance-key" type="checkbox"> Remove the saved API key</label>
+          <p class="muted">Test the exact connection settings before saving. Saving repeats the test on the server.</p>
+          <div><button id="test-instance" class="secondary">Test connection</button><button id="save-instance" disabled>Save instance</button><button id="cancel-instance" class="secondary hidden">Cancel edit</button></div>
+        </div>
+        <div><h3>Configured instances</h3><div id="instances-list"></div></div>
+      </div>
+    </section>
     <aside id="create-panel" class="user">
       <h2>Add a user</h2>
       <label for="new-username">Username</label><input id="new-username" type="text" maxlength="64" autocomplete="off">
@@ -92,6 +119,11 @@ ADMIN_PAGE = r"""<!doctype html>
   };
   let roleGroups = [];
   let instanceNames = [];
+  let instanceRecords = [];
+  let wildcardUserCount = 0;
+  let editingInstance = null;
+  let editingInstanceActive = true;
+  let testedInstancePayload = null;
   const token = () => sessionStorage.getItem(tokenKey) || '';
   const api = async (path, options = {}) => {
     const response = await fetch('/admin/api' + path, {
@@ -107,6 +139,121 @@ ADMIN_PAGE = r"""<!doctype html>
     const value = input.value.trim();
     return value === '*' ? ['*'] : value.split(',').map(name => name.trim()).filter(Boolean);
   };
+  const instancePayload = () => ({
+    name: document.querySelector('#instance-name').value.trim(),
+    base_url: document.querySelector('#instance-url').value.trim(),
+    database: document.querySelector('#instance-database').value.trim(),
+    api_key: document.querySelector('#instance-api-key').value,
+    clear_api_key: document.querySelector('#clear-instance-key').checked,
+    existing_name: editingInstance
+  });
+  const instancePayloadKey = () => JSON.stringify(instancePayload());
+  const invalidateInstanceTest = () => {
+    testedInstancePayload = null;
+    document.querySelector('#save-instance').disabled = true;
+  };
+  const resetInstanceForm = () => {
+    editingInstance = null;
+    editingInstanceActive = true;
+    invalidateInstanceTest();
+    document.querySelector('#instance-form-title').textContent = 'Add an instance';
+    document.querySelector('#instance-name').disabled = false;
+    document.querySelector('#instance-name').value = '';
+    document.querySelector('#instance-url').value = '';
+    document.querySelector('#instance-database').value = '';
+    document.querySelector('#instance-api-key').value = '';
+    document.querySelector('#clear-instance-key').checked = false;
+    document.querySelector('#instance-api-key').disabled = false;
+    document.querySelector('#test-instance').disabled = false;
+    document.querySelector('#cancel-instance').classList.add('hidden');
+  };
+  const loadInstances = async () => {
+    const data = await api('/instances');
+    instanceNames = data.instances;
+    instanceRecords = data.records;
+    wildcardUserCount = data.wildcard_users;
+    document.querySelector('#instance-help').textContent = 'Active instances: ' + (instanceNames.join(', ') || 'none') + '. Use * only when access to every current and future instance is intended.';
+    document.querySelector('#wildcard-warning').textContent = data.wildcard_users
+      ? data.wildcard_users + ' active user(s) have * access and will also gain access to any new instance. Review their scopes after adding one.'
+      : 'No active users currently have wildcard (*) access.';
+    const list = document.querySelector('#instances-list'); list.replaceChildren();
+    for (const item of instanceRecords) {
+      const card = document.createElement('article'); card.className = 'instance-card';
+      const heading = document.createElement('h3'); heading.textContent = item.name + (item.active ? ' · active' : ' · inactive');
+      const url = document.createElement('p'); url.className = 'instance-meta'; url.textContent = item.base_url;
+      const database = document.createElement('p'); database.className = 'instance-meta'; database.textContent = 'Database: ' + (item.database || 'not specified');
+      const credential = document.createElement('p'); credential.className = 'instance-meta'; credential.textContent = 'API key: ' + (item.api_key_configured ? 'configured' : 'not configured');
+      const edit = document.createElement('button'); edit.textContent = 'Edit'; edit.className = 'secondary';
+      edit.addEventListener('click', () => {
+        editingInstance = item.name;
+        editingInstanceActive = item.active;
+        document.querySelector('#instance-form-title').textContent = 'Edit instance';
+        const name = document.querySelector('#instance-name'); name.value = item.name; name.disabled = true;
+        document.querySelector('#instance-url').value = item.base_url;
+        document.querySelector('#instance-database').value = item.database || '';
+        document.querySelector('#instance-api-key').value = '';
+        document.querySelector('#clear-instance-key').checked = false;
+        document.querySelector('#instance-api-key').disabled = false;
+        document.querySelector('#test-instance').disabled = false;
+        document.querySelector('#cancel-instance').classList.remove('hidden');
+        invalidateInstanceTest();
+      });
+      const toggle = document.createElement('button'); toggle.textContent = item.active ? 'Deactivate' : 'Reactivate'; toggle.className = item.active ? 'danger' : '';
+      toggle.addEventListener('click', async () => {
+        if (item.active && !confirm('Deactivate ' + item.name + '? MCP requests to this instance will stop. Existing user access assignments are retained.')) return;
+        try {
+          await api('/instances/' + encodeURIComponent(item.name) + '/status', {method:'PUT', body:JSON.stringify({active:!item.active})});
+          await loadInstances(); await loadUsers(); message.textContent = item.active ? 'Instance deactivated.' : 'Instance reactivated.';
+        } catch (error) { message.textContent = error.message; }
+      });
+      card.append(heading,url,database,credential,edit,toggle); list.append(card);
+    }
+  };
+  document.querySelector('#cancel-instance').addEventListener('click', resetInstanceForm);
+  document.querySelector('#clear-instance-key').addEventListener('change', event => {
+    document.querySelector('#instance-api-key').disabled = event.target.checked;
+    invalidateInstanceTest();
+    const testButton = document.querySelector('#test-instance');
+    testButton.disabled = event.target.checked && !editingInstanceActive;
+    if (event.target.checked && !editingInstanceActive) {
+      testedInstancePayload = instancePayloadKey();
+      document.querySelector('#save-instance').disabled = false;
+      message.textContent = 'This inactive instance can have its saved key removed without a connection test.';
+    }
+  });
+  for (const selector of ['#instance-name', '#instance-url', '#instance-database', '#instance-api-key']) {
+    document.querySelector(selector).addEventListener('input', invalidateInstanceTest);
+  }
+  document.querySelector('#test-instance').addEventListener('click', async () => {
+    invalidateInstanceTest();
+    const testedPayload = instancePayloadKey();
+    try {
+      const result = await api('/instances/test', {method:'POST', body:JSON.stringify(instancePayload())});
+      if (testedPayload !== instancePayloadKey()) throw new Error('Settings changed during the test. Test again before saving.');
+      testedInstancePayload = testedPayload;
+      document.querySelector('#save-instance').disabled = false;
+      message.textContent = result.message;
+    } catch (error) { message.textContent = error.message; }
+  });
+  document.querySelector('#save-instance').addEventListener('click', async () => {
+    const payload = instancePayload();
+    if (testedInstancePayload !== JSON.stringify(payload)) {
+      invalidateInstanceTest();
+      message.textContent = 'Test the current connection settings successfully before saving.';
+      return;
+    }
+    if (payload.clear_api_key && !confirm('Remove the saved API key from this inactive instance?')) return;
+    if (!editingInstance && wildcardUserCount > 0 &&
+        !confirm('Users with * access will also gain access to this new Odoo instance. Add it anyway?')) return;
+    try {
+      if (editingInstance) {
+        await api('/instances/' + encodeURIComponent(editingInstance), {method:'PUT', body:JSON.stringify(payload)});
+      } else {
+        await api('/instances', {method:'POST', body:JSON.stringify(payload)});
+      }
+      resetInstanceForm(); await loadInstances(); await loadUsers(); message.textContent = 'Instance saved.';
+    } catch (error) { message.textContent = error.message; }
+  });
   const drawRoleBoxes = (container, chosen = []) => {
     container.replaceChildren();
     container.classList.add('role-groups');
@@ -178,9 +325,8 @@ ADMIN_PAGE = r"""<!doctype html>
   };
   const enter = async () => {
     try {
-      const [data, instances] = await Promise.all([api('/roles'), api('/instances')]);
-      roleGroups = data.groups; instanceNames = instances.instances;
-      document.querySelector('#instance-help').textContent = 'Configured: ' + instanceNames.join(', ') + '. Use * only when access to every instance is needed.';
+      const [data] = await Promise.all([api('/roles'), loadInstances()]);
+      roleGroups = data.groups;
       drawRoleBoxes(document.querySelector('#new-roles'), ['viewer']);
       await loadUsers(); login.classList.add('hidden'); app.classList.remove('hidden');
       document.querySelector('#login-error').textContent = '';
@@ -227,8 +373,17 @@ async def _authorized_admin(request: Request, directory: UserDirectory):
     return user, None
 
 
-def create_admin_routes(directory: UserDirectory, instance_names=()) -> list[Route]:
+def create_admin_routes(directory: UserDirectory, instance_names=(),
+                        instance_directory: InstanceDirectory | None = None, on_instances_changed=None) -> list[Route]:
     configured_instances = sorted(set(instance_names))
+
+    def refresh_instances() -> None:
+        if instance_directory is None:
+            return
+        active = instance_directory.active_instances()
+        directory.instance_names = frozenset(instance_directory.names(active_only=False))
+        if on_instances_changed:
+            on_instances_changed(active)
 
     async def page(request: Request) -> Response:
         return HTMLResponse(ADMIN_PAGE)
@@ -249,7 +404,136 @@ def create_admin_routes(directory: UserDirectory, instance_names=()) -> list[Rou
         _, error = await _authorized_admin(request, directory)
         if error:
             return error
-        return JSONResponse({"instances": configured_instances})
+        if instance_directory:
+            records = instance_directory.public_records()
+            active_names = instance_directory.names(active_only=True)
+        else:
+            records = [{"name": name, "base_url": "", "database": None,
+                        "active": True, "api_key_configured": False} for name in configured_instances]
+            active_names = configured_instances
+        wildcard_users = sum(
+            1 for user in directory.list_users()
+            if user["active"] and "*" in user.get("instances", [])
+        )
+        return JSONResponse({"instances": active_names, "records": records, "wildcard_users": wildcard_users})
+
+    async def test_instance(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        if instance_directory is None:
+            return JSONResponse({"detail": "Instance management is not enabled"}, status_code=501)
+        try:
+            body = await request.json()
+            clear_api_key = body.get("clear_api_key", False)
+            if not isinstance(clear_api_key, bool):
+                raise ValueError("clear_api_key must be true or false")
+            instance = instance_directory.candidate(
+                body.get("name"), body.get("base_url"), body.get("database"), body.get("api_key"),
+                clear_api_key,
+            )
+            await verify_credentials(instance)
+        except (ValueError, TypeError, OdooApiError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"message": "Connection and authenticated read succeeded."})
+
+    async def verify_credentials(instance) -> None:
+        api = OdooJson2(instance)
+        try:
+            await api.test_credentials()
+        finally:
+            await api.close()
+
+    async def create_instance(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        if instance_directory is None:
+            return JSONResponse({"detail": "Instance management is not enabled"}, status_code=501)
+        try:
+            body = await request.json()
+            instance = instance_directory.candidate(
+                body.get("name"), body.get("base_url"), body.get("database"), body.get("api_key")
+            )
+            if instance.name in instance_directory.names(active_only=False):
+                return JSONResponse({"detail": "That instance name already exists"}, status_code=409)
+            await verify_credentials(instance)
+            instance_directory.save(instance)
+            refresh_instances()
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except OdooApiError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except OSError:
+            return JSONResponse({"detail": "Could not securely save the instance configuration"}, status_code=500)
+        return JSONResponse({"created": True}, status_code=201)
+
+    async def update_instance(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        if instance_directory is None:
+            return JSONResponse({"detail": "Instance management is not enabled"}, status_code=501)
+        try:
+            body = await request.json()
+            clear_api_key = body.get("clear_api_key", False)
+            if not isinstance(clear_api_key, bool):
+                raise ValueError("clear_api_key must be true or false")
+            name = request.path_params["name"]
+            if name not in instance_directory.names(active_only=False):
+                return JSONResponse({"detail": "Instance not found"}, status_code=404)
+            current = next(record for record in instance_directory.public_records() if record["name"] == name)
+            if clear_api_key and current["active"]:
+                raise ValueError("Deactivate an instance before removing its API key")
+            if body.get("name", name) != name:
+                raise ValueError("Instance names cannot be changed; add a new name and deactivate the old instance")
+            instance = instance_directory.candidate(
+                name, body.get("base_url"), body.get("database"), body.get("api_key"),
+                clear_api_key,
+            )
+            if not clear_api_key:
+                await verify_credentials(instance)
+            instance_directory.save(instance, clear_api_key=clear_api_key)
+            refresh_instances()
+        except KeyError:
+            return JSONResponse({"detail": "Instance not found"}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except OdooApiError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except OSError:
+            return JSONResponse({"detail": "Could not securely save the instance configuration"}, status_code=500)
+        return JSONResponse({"updated": True})
+
+    async def set_instance_status(request: Request) -> Response:
+        _, error = await _authorized_admin(request, directory)
+        if error:
+            return error
+        if instance_directory is None:
+            return JSONResponse({"detail": "Instance management is not enabled"}, status_code=501)
+        try:
+            body = await request.json()
+            active = body.get("active")
+            if not isinstance(active, bool):
+                raise ValueError("active must be true or false")
+            if active:
+                record = next((
+                    item for item in instance_directory.public_records()
+                    if item["name"] == request.path_params["name"]
+                ), None)
+                if record is None:
+                    raise KeyError(request.path_params["name"])
+                if not record["api_key_configured"]:
+                    raise ValueError("Configure and test an API key before reactivating this instance")
+            instance_directory.set_active(request.path_params["name"], active)
+            refresh_instances()
+        except KeyError:
+            return JSONResponse({"detail": "Instance not found"}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except OSError:
+            return JSONResponse({"detail": "Could not securely save the instance configuration"}, status_code=500)
+        return JSONResponse({"updated": True})
 
     async def create_user(request: Request) -> Response:
         _, error = await _authorized_admin(request, directory)
@@ -257,6 +541,12 @@ def create_admin_routes(directory: UserDirectory, instance_names=()) -> list[Rou
             return error
         try:
             body = await request.json()
+            requested_instances = body.get("instances")
+            if (instance_directory and isinstance(requested_instances, list)
+                    and "*" not in requested_instances):
+                inactive = set(requested_instances) - set(instance_directory.names(active_only=True))
+                if inactive:
+                    raise ValueError("New users can only be assigned to active Odoo instances")
             token = directory.add_user(body.get("username"), body.get("roles"), body.get("instances"))
         except (ValueError, TypeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -318,7 +608,11 @@ def create_admin_routes(directory: UserDirectory, instance_names=()) -> list[Rou
         Route("/admin", page, methods=["GET"]),
         Route("/admin/", page, methods=["GET"]),
         Route("/admin/api/roles", list_roles, methods=["GET"]),
+        Route("/admin/api/instances/test", test_instance, methods=["POST"]),
         Route("/admin/api/instances", list_instances, methods=["GET"]),
+        Route("/admin/api/instances", create_instance, methods=["POST"]),
+        Route("/admin/api/instances/{name:str}/status", set_instance_status, methods=["PUT"]),
+        Route("/admin/api/instances/{name:str}", update_instance, methods=["PUT"]),
         Route("/admin/api/users", list_users, methods=["GET"]),
         Route("/admin/api/users", create_user, methods=["POST"]),
         Route("/admin/api/users/{username:str}/instances", update_instances, methods=["PUT"]),

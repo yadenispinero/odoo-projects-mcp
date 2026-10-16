@@ -35,8 +35,10 @@ Build a standalone service that exposes a small set of useful Odoo operations to
 - Added per-user allowlists for configured Odoo instances, including management through the local admin page.
 - Added Docker Compose packaging and separated the developer's private connection files from the project directory.
 - Documented architecture, threat assumptions, data-protection questions, and remaining work.
-- Connected to an Odoo 19 Community test environment and verified the version endpoint. Authenticated operation coverage and a repeatable demo checklist remain to be documented before production use.
-- The per-user instance-scope change is in the current source tree; it still needs the authorization matrix and an upgraded-container rollout before it can be described as verified in operation.
+- Connected to an Odoo 19 Community test environment and verified the version endpoint.
+- Verified the local admin page and permission behavior: a viewer could read the assigned instance, while access to an unassigned instance and task creation were denied. The temporary test user was revoked after the check.
+- In the local test setup, restricted the task-management user to the configured test instance while retaining its viewer, task-editor, and project-manager roles.
+- Ran the automated suite: 8 passed, 1 skipped. The skipped check requires a separately configured live Odoo test URL.
 
 ## Security and privacy posture
 
@@ -51,6 +53,6 @@ The service uses HTTPS to reach Odoo, keeps Odoo API keys on the service side, l
 - The remote deployment has HTTPS, a selected identity model, documented secret rotation, and a recovery procedure.
 - A demo uses synthetic records and demonstrates least-privilege roles, including a user who cannot publish pages.
 
-## Portfolio note
+## Current status
 
-This case study describes the current prototype and planned acceptance criteria. Add your personal role, stakeholder decisions, delivery timeline, and measured outcomes only where you can substantiate them.
+This is a working prototype, not a production deployment or a claim of regulatory compliance. The project documents the implemented controls and observed checks separately from the acceptance criteria that remain open. Personal role, stakeholder decisions, delivery timeline, and business outcomes are omitted until they can be supported with project evidence.

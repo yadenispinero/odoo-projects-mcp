@@ -64,7 +64,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def check_odoo_connection(instance: str, ctx: Context) -> dict[str, Any]:
         """Read the public Odoo version endpoint for a named instance; no writes or credentials are used."""
-        require_tool_access(ctx.headers, user_directory, "check_odoo_connection", instance)
+        require_tool_access("check_odoo_connection", instance)
         api = target(instance)
         try:
             version = await api.version()
@@ -76,7 +76,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def search_projects(instance: str, ctx: Context, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """Search Odoo projects by name."""
-        require_tool_access(ctx.headers, user_directory, "search_projects", instance)
+        require_tool_access("search_projects", instance)
         limit = _limit(limit)
         domain = [["name", "ilike", query]] if query else []
         api = target(instance)
@@ -88,7 +88,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def get_project(instance: str, project_id: int, ctx: Context) -> dict[str, Any]:
         """Get one project by ID."""
-        require_tool_access(ctx.headers, user_directory, "get_project", instance)
+        require_tool_access("get_project", instance)
         api = target(instance)
         try:
             return await api.read("project.project", _positive_id(project_id, "project_id"), PROJECT_FIELDS)
@@ -108,7 +108,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         date_end: str | None = None,
     ) -> dict[str, int]:
         """Create a project using an explicit allowlist of general project fields."""
-        require_tool_access(ctx.headers, user_directory, "create_project", instance)
+        require_tool_access("create_project", instance)
         if not name.strip():
             raise ValueError("name must not be empty")
         values: dict[str, Any] = {"name": name.strip()}
@@ -146,7 +146,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         date_end: str | None = None,
     ) -> dict[str, bool]:
         """Update only supplied general project fields from the tool's allowlist."""
-        require_tool_access(ctx.headers, user_directory, "update_project", instance)
+        require_tool_access("update_project", instance)
         values: dict[str, Any] = {}
         if name is not None:
             if not name.strip():
@@ -179,7 +179,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     async def search_tasks(instance: str, ctx: Context, query: str = "", project_id: int | None = None,
                           limit: int = 20) -> list[dict[str, Any]]:
         """Search Odoo tasks by name and optional project."""
-        require_tool_access(ctx.headers, user_directory, "search_tasks", instance)
+        require_tool_access("search_tasks", instance)
         domain: list = []
         if query:
             domain.append(["name", "ilike", query])
@@ -194,7 +194,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def get_task(instance: str, task_id: int, ctx: Context) -> dict[str, Any]:
         """Get one task by ID."""
-        require_tool_access(ctx.headers, user_directory, "get_task", instance)
+        require_tool_access("get_task", instance)
         api = target(instance)
         try:
             return await api.read("project.task", _positive_id(task_id, "task_id"), TASK_FIELDS)
@@ -205,7 +205,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     async def create_task(instance: str, name: str, project_id: int, ctx: Context, description: str = "",
                           date_deadline: str | None = None) -> dict[str, int]:
         """Create a task with a name, project, optional description, and optional YYYY-MM-DD deadline."""
-        require_tool_access(ctx.headers, user_directory, "create_task", instance)
+        require_tool_access("create_task", instance)
         if not name.strip():
             raise ValueError("name must not be empty")
         values: dict[str, Any] = {"name": name.strip(), "project_id": _positive_id(project_id, "project_id")}
@@ -224,7 +224,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                           description: str | None = None, date_deadline: str | None = None,
                           project_id: int | None = None) -> dict[str, bool]:
         """Update only the supplied task fields."""
-        require_tool_access(ctx.headers, user_directory, "update_task", instance)
+        require_tool_access("update_task", instance)
         values: dict[str, Any] = {}
         if name is not None:
             if not name.strip():
@@ -247,7 +247,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def search_pages(instance: str, ctx: Context, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
         """Search website pages by name or URL."""
-        require_tool_access(ctx.headers, user_directory, "search_pages", instance)
+        require_tool_access("search_pages", instance)
         domain: list = []
         if query:
             domain = ["|", ["name", "ilike", query], ["url", "ilike", query]]
@@ -260,7 +260,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def get_page(instance: str, page_id: int, ctx: Context) -> dict[str, Any]:
         """Get a website page's metadata by ID."""
-        require_tool_access(ctx.headers, user_directory, "get_page", instance)
+        require_tool_access("get_page", instance)
         api = target(instance)
         try:
             return await api.read("website.page", _positive_id(page_id, "page_id"), PAGE_FIELDS)
@@ -270,7 +270,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def update_page_content(instance: str, page_id: int, html: str, ctx: Context) -> dict[str, bool]:
         """Replace a page's view architecture with supplied HTML. Test on a disposable page first."""
-        require_tool_access(ctx.headers, user_directory, "update_page_content", instance)
+        require_tool_access("update_page_content", instance)
         if not html.strip():
             raise ValueError("html must not be empty")
         api = target(instance)
@@ -286,7 +286,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def publish_page(instance: str, page_id: int, ctx: Context) -> dict[str, bool]:
         """Publish a website page as an explicit action."""
-        require_tool_access(ctx.headers, user_directory, "publish_page", instance)
+        require_tool_access("publish_page", instance)
         api = target(instance)
         try:
             return {"published": await api.write("website.page", _positive_id(page_id, "page_id"),
@@ -297,7 +297,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def unpublish_page(instance: str, page_id: int, ctx: Context) -> dict[str, bool]:
         """Unpublish a website page as an explicit action."""
-        require_tool_access(ctx.headers, user_directory, "unpublish_page", instance)
+        require_tool_access("unpublish_page", instance)
         api = target(instance)
         try:
             return {"unpublished": await api.write("website.page", _positive_id(page_id, "page_id"),

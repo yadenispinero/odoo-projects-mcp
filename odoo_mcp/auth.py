@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
+from contextvars import ContextVar
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,9 @@ ROLE_TOOLS["project_manager"] = frozenset(
     {"search_projects", "get_project", "create_project", "update_project"}
 )
 ROLE_TOOLS["administrator"] = frozenset().union(*ROLE_TOOLS.values())
+
+# Bound by the HTTP auth middleware for the lifetime of each MCP request.
+current_mcp_user: ContextVar["MCPUser | None"] = ContextVar("current_mcp_user", default=None)
 
 
 @dataclass(frozen=True)
@@ -278,10 +282,8 @@ def bearer_token(headers: Mapping[str, str] | None) -> str | None:
     return token.strip()
 
 
-def require_tool_access(headers: Mapping[str, str] | None, directory: UserDirectory,
-                        tool_name: str, instance: str | None = None) -> MCPUser:
-    token = bearer_token(headers)
-    user = directory.authenticate(token) if token else None
+def require_tool_access(tool_name: str, instance: str | None = None) -> MCPUser:
+    user = current_mcp_user.get()
     if user is None:
         raise PermissionError("Authentication required")
     if not user.can_use(tool_name):
@@ -303,7 +305,8 @@ class BearerAuthMiddleware:
         if scope["type"] == "http" and scope.get("path") == self.mcp_path:
             headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
             token = bearer_token(headers)
-            if not token or self.directory.authenticate(token) is None:
+            user = self.directory.authenticate(token) if token else None
+            if user is None:
                 body = b"Unauthorized"
                 await send(
                     {
@@ -316,4 +319,10 @@ class BearerAuthMiddleware:
                 )
                 await send({"type": "http.response.body", "body": body})
                 return
+            user_context = current_mcp_user.set(user)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                current_mcp_user.reset(user_context)
+            return
         await self.app(scope, receive, send)

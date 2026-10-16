@@ -1,0 +1,7 @@
+{
+  "testing": {
+    "base_url": "https://odoo.example.com",
+    "database": null,
+    "api_key_env": "ODOO_TESTING_API_KEY"
+  }
+}

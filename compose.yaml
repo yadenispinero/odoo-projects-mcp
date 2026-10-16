@@ -1,0 +1,19 @@
+services:
+  odoo-mcp:
+    build: .
+    container_name: odoo-mcp
+    restart: unless-stopped
+    ports:
+      - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8000}:8000"
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      MCP_PATH: /mcp
+      ODOO_INSTANCES_FILE: /run/secrets/odoo_instances
+      ODOO_TESTING_API_KEY: ${ODOO_TESTING_API_KEY:-}
+    secrets:
+      - odoo_instances
+
+secrets:
+  odoo_instances:
+    file: ${ODOO_INSTANCES_FILE:-./odoo-instances.json}

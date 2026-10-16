@@ -1,0 +1,12 @@
+{
+  "users": {
+    "owner": {
+      "token_env": "MCP_TOKEN_OWNER",
+      "roles": ["administrator"]
+    },
+    "n8n": {
+      "token_env": "MCP_TOKEN_N8N",
+      "roles": ["viewer", "task_editor"]
+    }
+  }
+}

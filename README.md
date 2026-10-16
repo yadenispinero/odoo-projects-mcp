@@ -1,6 +1,6 @@
 # Odoo Projects and Website MCP
 
-Initial MCP server for a named Odoo 19 target. The current Docker Compose setup binds to `127.0.0.1:8000`; it is intended for local testing and must not be exposed publicly until inbound MCP authentication and HTTPS deployment are configured.
+Initial MCP server for a named Odoo 19 target. The Docker Compose service requires a bearer token for every MCP request and binds to `127.0.0.1:8000`. Do not expose it publicly until HTTPS and a suitable remote identity provider or authenticated reverse proxy are configured.
 
 ## Current tools
 
@@ -9,19 +9,37 @@ Initial MCP server for a named Odoo 19 target. The current Docker Compose setup 
 - Task create/update tools.
 - Website page search/read, content update, publish, and unpublish tools.
 
-All tools require the configured instance name (`testing` in the starter configuration). JSON-2 requests require an Odoo API key from a user with appropriate limited permissions.
+All tools require a configured MCP user token and Odoo instance name (`testing` in the starter configuration). JSON-2 requests require the Odoo API key from a user with appropriate limited permissions. MCP roles restrict tools before Odoo is called; Odoo permissions and record rules remain a second authorization layer.
+
+### MCP users and roles
+
+The local administration page is `http://127.0.0.1:8000/admin`. Sign in with the initial `owner` token from `.env`. It lets an administrator add users, assign roles, change roles, rotate a token, and revoke access. A newly created or rotated token is shown once; copy it to that person's MCP client. The admin page keeps the owner token in the current browser tab only.
+
+On first startup, copy `mcp-users.example.json` to the ignored local file `mcp-users.json` and set distinct random values of at least 32 characters in `.env` for `MCP_TOKEN_OWNER` and `MCP_TOKEN_N8N`. The initial users are `owner` with all current tools and `n8n` with read access plus task create/update. The service seeds these identities into its persistent SQLite volume. After that, manage users in the webpage; changes take effect immediately and user tokens are stored as SHA-256 digests.
+
+Available roles:
+
+- `viewer`: connection check and project, task, and page search/read.
+- `task_editor`: create and update tasks.
+- `project_manager`: search, read, create, and update projects.
+- `website_editor`: edit page content.
+- `publisher`: publish and unpublish pages.
+- `administrator`: all currently registered tools.
+
+The database stores only SHA-256 digests of MCP bearer tokens, not the tokens themselves. Initial tokens are read from environment variables at first startup and must never be committed. The administration page and MCP service are currently local-only; this setup uses static bearer tokens, not an OAuth login flow. The Odoo API key is still shared by requests to the configured instance, so Odoo audit entries identify the technical Odoo account.
 
 ## Configure and run
 
 1. Copy `odoo-instances.example.json` to the ignored local file `odoo-instances.json` and set the URL/database for your instance. The local copy in this workspace already points at `https://odoo.example.com`.
-2. Copy `.env.example` to the ignored local file `.env` and put the API key in `ODOO_TESTING_API_KEY`. Keep the key out of source files and chat messages.
-3. Start or refresh the service:
+2. Copy `.env.example` to the ignored local file `.env` and set `ODOO_TESTING_API_KEY` plus distinct random bearer tokens for the MCP users. Keep all keys out of source files and chat messages.
+3. Copy `mcp-users.example.json` to the ignored local file `mcp-users.json`.
+4. Start or refresh the service:
 
    ```sh
    docker compose up -d --build
    ```
 
-The MCP endpoint is `http://127.0.0.1:8000/mcp`. The connection-check tool can confirm the public Odoo version without credentials. Other tools require the configured API key.
+The MCP endpoint is `http://127.0.0.1:8000/mcp`. Every client must send `Authorization: Bearer <its MCP token>` on MCP requests. Odoo credentials remain server-side.
 
 ## Run tests
 

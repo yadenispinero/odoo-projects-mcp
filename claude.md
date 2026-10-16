@@ -31,6 +31,7 @@ Las herramientas MCP tendrán nombres y parámetros específicos. Cada herramien
 - Se usarán credenciales de un usuario técnico de Odoo con los permisos mínimos necesarios.
 - Las credenciales no se guardarán en el código ni en el repositorio; se suministrarán mediante secretos o variables de entorno.
 - El endpoint MCP remoto requerirá autenticación y HTTPS.
+- Cada usuario cliente tendrá un token propio y uno o más roles limitados a herramientas concretas; las reglas de acceso de Odoo se mantienen como segunda capa.
 - Las operaciones de publicación y despublicación serán distintas de la edición de contenido.
 - Se registrarán las operaciones y los errores sin exponer secretos.
 - No se habilitarán consultas SQL arbitrarias ni acceso genérico a modelos o campos.
@@ -116,6 +117,10 @@ Las herramientas MCP tendrán nombres y parámetros específicos. Cada herramien
 
 La instancia de prueba indicada es `https://odoo.example.com`, con Project y Website activos. La comprobación de solo lectura a `/web/version` respondió `19.0-20260926`; el entorno es accesible desde el contenedor.
 
-Se ha creado y ejecutado una versión inicial del servidor MCP en Docker. Implementa Streamable HTTP y usa JSON-2. La suite inicial tiene 9 pruebas aprobadas, incluida la comprobación de versión en vivo. Las llamadas autenticadas a modelos y las escrituras todavía requieren una API key y validación de permisos/campos en la instancia antes de considerarse verificadas.
+Se ha creado y ejecutado una versión inicial del servidor MCP en Docker. Implementa Streamable HTTP y usa JSON-2. La suite inicial tuvo 9 pruebas aprobadas, incluida la comprobación de versión en vivo. Se añadió autenticación Bearer y permisos por roles. El servicio tiene una página local de administración (`/admin`) para crear usuarios, asignar roles, rotar tokens y revocar acceso; los cambios se guardan en un volumen SQLite y aplican de inmediato. El token inicial de `owner` se configura en `.env`; los tokens de nuevos usuarios se muestran una sola vez y solo se guardan como hash. Esta primera versión usa tokens estáticos; todavía no implementa OAuth ni HTTPS remoto.
 
-Siguiente: configurar la API key de una cuenta técnica de permisos mínimos de forma local, revisar `/doc`, y validar primero búsquedas de lectura. Después probar creación/actualización de una tarea y edición/publicación de una página de prueba.
+Se añadieron herramientas MCP para crear y actualizar proyectos, con campos limitados a nombre, descripción, estado activo, visibilidad, responsable, cliente y fechas. Se creó el rol `project_manager` para esas operaciones y lectura de proyectos.
+
+La instancia de prueba indicó inicialmente que el usuario técnico no podía crear proyectos; por eso sigue pendiente crear el proyecto y validar escrituras en Odoo. El MCP tampoco expone todavía una herramienta `create_project`.
+
+Siguiente: conectar un cliente con el token del rol que corresponda, añadir identidades individuales según necesidad, y probar permisos de lectura/escritura con datos temporales en la instancia de prueba. Implementar OAuth y HTTPS al preparar acceso remoto.

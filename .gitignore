@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 odoo-instances.json
+mcp-users.json
 __pycache__/
 .pytest_cache/
 .venv/

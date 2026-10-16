@@ -38,7 +38,7 @@ Build a standalone service that exposes a small set of useful Odoo operations to
 - Connected to an Odoo 19 Community test environment and verified the version endpoint.
 - Verified the local admin page and permission behavior: a viewer could read the assigned instance, while access to an unassigned instance and task creation were denied. The temporary test user was revoked after the check.
 - In the local test setup, restricted the task-management user to the configured test instance while retaining its viewer, task-editor, and project-manager roles.
-- Ran the automated suite: 8 passed, 1 skipped. The skipped check requires a separately configured live Odoo test URL.
+- Ran the automated suite: 11 passed, 1 skipped. The skipped check requires a separately configured live Odoo test URL.
 
 ## Security and privacy posture
 

@@ -46,7 +46,7 @@ See [Architecture](docs/ARCHITECTURE.md), [Threat model](docs/THREAT_MODEL.md), 
 
 ## Run locally
 
-Requirements: Docker Compose and an Odoo instance with the JSON-2 API available.
+Requirements: Docker Compose and an Odoo instance with an enabled external API.
 
 1. Set up Compose configuration and a private connection directory. For the local default:
 
@@ -66,6 +66,8 @@ Requirements: Docker Compose and an Odoo instance with the JSON-2 API available.
    ```
 
 The MCP endpoint is `http://127.0.0.1:8000/mcp`; the local admin page is `http://127.0.0.1:8000/admin`. The configured `owner` token is used to sign in. User tokens are shown once when created or rotated. Add later Odoo targets from the **Odoo instances** section; a successful authenticated read is required before creating or editing a connection, and the server repeats the check so a direct API request cannot bypass it. Removing a key is allowed only after deactivating that instance; an instance without a key cannot be reactivated. Local config, instance credentials, SQLite state, and `.env` files are outside Git and the Docker build context.
+
+Choose **JSON-2** for Odoo 19+ or **XML-RPC** for Odoo 18 connections in the admin page. XML-RPC needs the database name, Odoo username/login, and an API key (used as the API password); JSON-2 uses an API key and an optional database name. Odoo 18's external API availability depends on the Odoo subscription plan.
 
 When upgrading an existing SQLite user database, the schema adds the instance allowlist while preserving existing access as `*`. After starting the upgraded service, use the admin page to replace `*` with explicit instance names for each account before configuring additional Odoo targets.
 

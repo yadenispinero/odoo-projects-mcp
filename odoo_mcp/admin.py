@@ -81,7 +81,9 @@ ADMIN_PAGE = r"""<!doctype html>
           <h3 id="instance-form-title">Add an instance</h3>
           <label for="instance-name">Instance name</label><input id="instance-name" type="text" maxlength="64" autocomplete="off">
           <label for="instance-url">Odoo base URL (HTTPS)</label><input id="instance-url" type="text" placeholder="https://odoo.example.com" autocomplete="url">
+          <label for="instance-api-type">Connection mode</label><select id="instance-api-type"><option value="json2">JSON-2 (Odoo 19+)</option><option value="xmlrpc">XML-RPC (Odoo 18)</option></select>
           <label for="instance-database">Database (optional)</label><input id="instance-database" type="text" autocomplete="off">
+          <label for="instance-username">Odoo username/login (XML-RPC)</label><input id="instance-username" type="text" autocomplete="username">
           <label for="instance-api-key">Odoo API key</label><input id="instance-api-key" type="password" autocomplete="new-password">
           <p class="muted">When editing, leave the key blank to keep the saved key. Remove a saved key only after deactivating that instance.</p>
           <label class="muted"><input id="clear-instance-key" type="checkbox"> Remove the saved API key</label>
@@ -142,7 +144,9 @@ ADMIN_PAGE = r"""<!doctype html>
   const instancePayload = () => ({
     name: document.querySelector('#instance-name').value.trim(),
     base_url: document.querySelector('#instance-url').value.trim(),
+    api_type: document.querySelector('#instance-api-type').value,
     database: document.querySelector('#instance-database').value.trim(),
+    username: document.querySelector('#instance-username').value.trim(),
     api_key: document.querySelector('#instance-api-key').value,
     clear_api_key: document.querySelector('#clear-instance-key').checked,
     existing_name: editingInstance
@@ -160,7 +164,9 @@ ADMIN_PAGE = r"""<!doctype html>
     document.querySelector('#instance-name').disabled = false;
     document.querySelector('#instance-name').value = '';
     document.querySelector('#instance-url').value = '';
+    document.querySelector('#instance-api-type').value = 'json2';
     document.querySelector('#instance-database').value = '';
+    document.querySelector('#instance-username').value = '';
     document.querySelector('#instance-api-key').value = '';
     document.querySelector('#clear-instance-key').checked = false;
     document.querySelector('#instance-api-key').disabled = false;
@@ -182,6 +188,7 @@ ADMIN_PAGE = r"""<!doctype html>
       const heading = document.createElement('h3'); heading.textContent = item.name + (item.active ? ' · active' : ' · inactive');
       const url = document.createElement('p'); url.className = 'instance-meta'; url.textContent = item.base_url;
       const database = document.createElement('p'); database.className = 'instance-meta'; database.textContent = 'Database: ' + (item.database || 'not specified');
+      const apiType = document.createElement('p'); apiType.className = 'instance-meta'; apiType.textContent = 'Connection mode: ' + item.api_type;
       const credential = document.createElement('p'); credential.className = 'instance-meta'; credential.textContent = 'API key: ' + (item.api_key_configured ? 'configured' : 'not configured');
       const edit = document.createElement('button'); edit.textContent = 'Edit'; edit.className = 'secondary';
       edit.addEventListener('click', () => {
@@ -190,7 +197,9 @@ ADMIN_PAGE = r"""<!doctype html>
         document.querySelector('#instance-form-title').textContent = 'Edit instance';
         const name = document.querySelector('#instance-name'); name.value = item.name; name.disabled = true;
         document.querySelector('#instance-url').value = item.base_url;
+        document.querySelector('#instance-api-type').value = item.api_type || 'json2';
         document.querySelector('#instance-database').value = item.database || '';
+        document.querySelector('#instance-username').value = item.username || '';
         document.querySelector('#instance-api-key').value = '';
         document.querySelector('#clear-instance-key').checked = false;
         document.querySelector('#instance-api-key').disabled = false;
@@ -206,7 +215,7 @@ ADMIN_PAGE = r"""<!doctype html>
           await loadInstances(); await loadUsers(); message.textContent = item.active ? 'Instance deactivated.' : 'Instance reactivated.';
         } catch (error) { message.textContent = error.message; }
       });
-      card.append(heading,url,database,credential,edit,toggle); list.append(card);
+      card.append(heading,url,database,apiType,credential,edit,toggle); list.append(card);
     }
   };
   document.querySelector('#cancel-instance').addEventListener('click', resetInstanceForm);
@@ -221,7 +230,7 @@ ADMIN_PAGE = r"""<!doctype html>
       message.textContent = 'This inactive instance can have its saved key removed without a connection test.';
     }
   });
-  for (const selector of ['#instance-name', '#instance-url', '#instance-database', '#instance-api-key']) {
+  for (const selector of ['#instance-name', '#instance-url', '#instance-api-type', '#instance-database', '#instance-username', '#instance-api-key']) {
     document.querySelector(selector).addEventListener('input', invalidateInstanceTest);
   }
   document.querySelector('#test-instance').addEventListener('click', async () => {
@@ -430,7 +439,7 @@ def create_admin_routes(directory: UserDirectory, instance_names=(),
                 raise ValueError("clear_api_key must be true or false")
             instance = instance_directory.candidate(
                 body.get("name"), body.get("base_url"), body.get("database"), body.get("api_key"),
-                clear_api_key,
+                clear_api_key, body.get("api_type", "json2"), body.get("username"),
             )
             await verify_credentials(instance)
         except (ValueError, TypeError, OdooApiError) as exc:
@@ -453,7 +462,8 @@ def create_admin_routes(directory: UserDirectory, instance_names=(),
         try:
             body = await request.json()
             instance = instance_directory.candidate(
-                body.get("name"), body.get("base_url"), body.get("database"), body.get("api_key")
+                body.get("name"), body.get("base_url"), body.get("database"), body.get("api_key"),
+                False, body.get("api_type", "json2"), body.get("username")
             )
             if instance.name in instance_directory.names(active_only=False):
                 return JSONResponse({"detail": "That instance name already exists"}, status_code=409)
@@ -489,7 +499,8 @@ def create_admin_routes(directory: UserDirectory, instance_names=(),
                 raise ValueError("Instance names cannot be changed; add a new name and deactivate the old instance")
             instance = instance_directory.candidate(
                 name, body.get("base_url"), body.get("database"), body.get("api_key"),
-                clear_api_key,
+                clear_api_key, body.get("api_type", current.get("api_type", "json2")),
+                body.get("username", current.get("username")),
             )
             if not clear_api_key:
                 await verify_credentials(instance)

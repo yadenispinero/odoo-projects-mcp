@@ -1,6 +1,7 @@
 {
   "demo": {
     "base_url": "https://odoo.example.com",
+    "api_type": "json2",
     "database": null,
     "api_key_env": "ODOO_API_KEY"
   }

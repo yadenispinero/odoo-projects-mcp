@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import xmlrpc.client
 
 import httpx
 
@@ -38,6 +39,10 @@ class OdooJson2:
     async def call(self, model: str, method: str, payload: dict[str, Any]) -> Any:
         if not self.instance.api_key:
             raise OdooApiError("No API key is configured for this Odoo instance")
+        if self.instance.api_type == "xmlrpc":
+            if not self.instance.database or not self.instance.username:
+                raise OdooApiError("XML-RPC requires a database and username/login")
+            return await self._xmlrpc_call(model, method, payload)
         headers = {
             "Authorization": f"Bearer {self.instance.api_key}",
             "Content-Type": "application/json",
@@ -57,6 +62,49 @@ class OdooJson2:
             raise OdooApiError(f"Odoo rejected {model}.{method} (HTTP {exc.response.status_code})") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise OdooApiError(f"Could not call Odoo method {model}.{method}") from exc
+
+    async def _xmlrpc_call(self, model: str, method: str, payload: dict[str, Any]) -> Any:
+        """Call Odoo 18's documented XML-RPC external API; the API key is the password."""
+        try:
+            uid = await self._xmlrpc_request("/xmlrpc/2/common", "authenticate",
+                (self.instance.database, self.instance.username, self.instance.api_key, {}))
+            if not isinstance(uid, int) or uid <= 0:
+                raise OdooApiError("Odoo XML-RPC authentication failed")
+            args, kwargs = self._xmlrpc_arguments(method, payload)
+            return await self._xmlrpc_request("/xmlrpc/2/object", "execute_kw",
+                (self.instance.database, uid, self.instance.api_key, model, method, args, kwargs))
+        except OdooApiError:
+            raise
+        except Exception as exc:
+            raise OdooApiError(f"Odoo rejected {model}.{method} over XML-RPC") from exc
+
+    async def _xmlrpc_request(self, path: str, method: str, params: tuple[Any, ...]) -> Any:
+        body = xmlrpc.client.dumps(params, methodname=method, allow_none=True).encode("utf-8")
+        try:
+            response = await self.client.post(
+                f"{self.instance.base_url}{path}",
+                headers={"Content-Type": "text/xml"}, content=body,
+            )
+            response.raise_for_status()
+            values, _ = xmlrpc.client.loads(response.content)
+            return values[0] if values else None
+        except xmlrpc.client.Fault as exc:
+            raise OdooApiError("Odoo returned an XML-RPC fault") from exc
+        except (httpx.HTTPError, xmlrpc.client.Error, ValueError) as exc:
+            raise OdooApiError("Could not complete the Odoo XML-RPC request") from exc
+
+    @staticmethod
+    def _xmlrpc_arguments(method: str, payload: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+        if method == "search_read":
+            return [payload.get("domain", [])], {key: payload[key] for key in ("fields", "limit", "order") if key in payload}
+        if method == "read":
+            return [payload["ids"]], {"fields": payload.get("fields", [])}
+        if method == "create":
+            vals_list = payload.get("vals_list", [])
+            return [vals_list[0]], {}
+        if method == "write":
+            return [payload["ids"], payload["vals"]], {}
+        raise OdooApiError(f"Unsupported XML-RPC method {method}")
 
     async def search_read(
         self, model: str, domain: list, fields: list[str], limit: int, order: str = "id desc"

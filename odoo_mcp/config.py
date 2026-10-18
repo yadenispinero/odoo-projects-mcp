@@ -15,6 +15,8 @@ class OdooInstance:
     base_url: str
     api_key: str | None = None
     database: str | None = None
+    api_type: str = "json2"
+    username: str | None = None
 
 
 def validate_instance_name(name: object) -> str:
@@ -58,6 +60,8 @@ def load_instances(path: str | None = None) -> dict[str, OdooInstance]:
             base_url=base_url.rstrip("/"),
             api_key=api_key,
             database=item.get("database"),
+            api_type=item.get("api_type", "json2"),
+            username=item.get("username"),
         )
     return instances
 
@@ -75,6 +79,8 @@ class InstanceDirectory:
                     "base_url": validate_base_url(instance.base_url),
                     "database": instance.database,
                     "api_key": instance.api_key,
+                    "api_type": instance.api_type,
+                    "username": instance.username,
                     "active": True,
                 }
                 for name, instance in initial_instances.items()
@@ -95,6 +101,8 @@ class InstanceDirectory:
             base_url = validate_base_url(item.get("base_url"))
             database = item.get("database")
             api_key = item.get("api_key")
+            api_type = item.get("api_type", "json2")
+            username = item.get("username")
             active = item.get("active", True)
             if database is not None and not isinstance(database, str):
                 raise ValueError(f"Instance {normalized_name!r} database must be text")
@@ -102,10 +110,16 @@ class InstanceDirectory:
                 raise ValueError(f"Instance {normalized_name!r} API key must be text")
             if not isinstance(active, bool):
                 raise ValueError(f"Instance {normalized_name!r} active flag must be boolean")
+            if api_type not in {"json2", "xmlrpc"}:
+                raise ValueError(f"Instance {normalized_name!r} api_type must be json2 or xmlrpc")
+            if username is not None and not isinstance(username, str):
+                raise ValueError(f"Instance {normalized_name!r} username must be text")
             records[normalized_name] = {
                 "base_url": base_url,
                 "database": database.strip() if isinstance(database, str) and database.strip() else None,
                 "api_key": api_key,
+                "api_type": api_type,
+                "username": username.strip() if isinstance(username, str) and username.strip() else None,
                 "active": active,
             }
         if not any(item["active"] for item in records.values()):
@@ -130,7 +144,8 @@ class InstanceDirectory:
 
     def active_instances(self) -> dict[str, OdooInstance]:
         return {
-            name: OdooInstance(name, str(item["base_url"]), item["api_key"], item["database"])
+            name: OdooInstance(name, str(item["base_url"]), item["api_key"], item["database"],
+                               str(item["api_type"]), item["username"])
             for name, item in self._records.items() if item["active"]
         }
 
@@ -141,12 +156,14 @@ class InstanceDirectory:
     def public_records(self) -> list[dict[str, object]]:
         return [
             {"name": name, "base_url": item["base_url"], "database": item["database"],
+             "api_type": item["api_type"], "username": item["username"],
              "active": item["active"], "api_key_configured": bool(item["api_key"])}
             for name, item in sorted(self._records.items())
         ]
 
     def candidate(self, name: object, base_url: object, database: object = None,
-                  api_key: object = None, clear_api_key: bool = False) -> OdooInstance:
+                  api_key: object = None, clear_api_key: bool = False,
+                  api_type: object = "json2", username: object = None) -> OdooInstance:
         normalized_name = validate_instance_name(name)
         normalized_url = validate_base_url(base_url)
         if database is not None and not isinstance(database, str):
@@ -158,10 +175,20 @@ class InstanceDirectory:
             raise ValueError("API key must be text")
         if isinstance(api_key, str) and len(api_key) > 4096:
             raise ValueError("API key is too long")
+        if api_type not in {"json2", "xmlrpc"}:
+            raise ValueError("API type must be json2 or xmlrpc")
+        if username is not None and not isinstance(username, str):
+            raise ValueError("Username must be text")
+        normalized_username = username.strip() if isinstance(username, str) and username.strip() else None
+        if username is None and normalized_name in self._records:
+            normalized_username = self._records[normalized_name].get("username")
+        if api_type == "xmlrpc" and not normalized_username:
+            raise ValueError("A username/login is required for XML-RPC connections")
         previous = self._records.get(normalized_name, {})
         key = None if clear_api_key else ((api_key.strip() if api_key and api_key.strip() else None)
                                           or previous.get("api_key"))
-        return OdooInstance(normalized_name, normalized_url, key, normalized_database)
+        return OdooInstance(normalized_name, normalized_url, key, normalized_database,
+                            str(api_type), normalized_username)
 
     def save(self, instance: OdooInstance, *, clear_api_key: bool = False) -> None:
         name = validate_instance_name(instance.name)
@@ -171,6 +198,8 @@ class InstanceDirectory:
         self._records[name] = {
             "base_url": validate_base_url(instance.base_url),
             "database": instance.database,
+            "api_type": instance.api_type,
+            "username": instance.username,
             "api_key": None if clear_api_key else (instance.api_key or previous.get("api_key")),
             "active": bool(previous.get("active", True)),
         }

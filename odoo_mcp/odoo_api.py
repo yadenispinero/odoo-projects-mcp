@@ -129,7 +129,11 @@ class OdooJson2:
 
     async def create(self, model: str, values: dict[str, Any]) -> int:
         result = await self.call(model, "create", {"vals_list": [values]})
-        if not isinstance(result, int):
+        # JSON-2 returns one ID per vals_list entry, while XML-RPC create
+        # returns the single ID directly.
+        if isinstance(result, list) and len(result) == 1:
+            result = result[0]
+        if not isinstance(result, int) or isinstance(result, bool) or result < 1:
             raise OdooApiError(f"Unexpected response from {model}.create")
         return result
 

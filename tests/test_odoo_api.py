@@ -58,12 +58,45 @@ async def test_create_uses_json2_vals_list_shape():
 
     def handler(request):
         seen["payload"] = request.read()
-        return httpx.Response(200, json=42)
+        # Odoo 19 JSON-2 returns the IDs created for vals_list.
+        return httpx.Response(200, json=[42])
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
     assert await api.create("project.task", {"name": "Test"}) == 42
     assert b'"vals_list":[{"name":"Test"}]' in seen["payload"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_xmlrpc_scalar_id():
+    def handler(request):
+        params, method = xmlrpc.client.loads(request.read())
+        if request.url.path.endswith("/common"):
+            assert method == "authenticate"
+            return xmlrpc_response(7)
+        assert request.url.path.endswith("/object")
+        assert method == "execute_kw"
+        assert params[3:6] == ("project.task", "create", [{"name": "Test"}])
+        return xmlrpc_response(42)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance(
+        "test", "https://odoo.example.test", "secret", "db1", "xmlrpc", "user@example.test"
+    ), client)
+    assert await api.create("project.task", {"name": "Test"}) == 42
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_value", [[], [1, 2], [True], 0, True, "42"])
+async def test_create_rejects_unexpected_ids_response(response_value):
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=response_value)
+    ))
+    api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
+    with pytest.raises(OdooApiError, match="Unexpected response"):
+        await api.create("project.task", {"name": "Test"})
     await client.aclose()
 
 

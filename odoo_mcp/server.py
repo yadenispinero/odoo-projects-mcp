@@ -258,8 +258,9 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def create_task(instance: str, name: str, project_id: int, ctx: Context, description: str = "",
-                          date_deadline: str | None = None) -> dict[str, int]:
-        """Create a task with a name, project, optional description, and optional YYYY-MM-DD deadline."""
+                          date_deadline: str | None = None,
+                          user_ids: list[int] | None = None) -> dict[str, int]:
+        """Create a task with optional assignees, description, and YYYY-MM-DD deadline."""
         require_tool_access("create_task", instance)
         if not name.strip():
             raise ValueError("name must not be empty")
@@ -268,6 +269,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             values["description"] = description
         if date_deadline:
             values["date_deadline"] = date_deadline
+        if user_ids is not None:
+            values["user_ids"] = [[6, 0, [_positive_id(user_id, "user_id") for user_id in user_ids]]]
         api = target(instance)
         try:
             return {"task_id": await api.create("project.task", values)}
@@ -277,7 +280,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def update_task(instance: str, task_id: int, ctx: Context, name: str | None = None,
                           description: str | None = None, date_deadline: str | None = None,
-                          project_id: int | None = None) -> dict[str, bool]:
+                          project_id: int | None = None,
+                          user_ids: list[int] | None = None) -> dict[str, bool]:
         """Update only the supplied task fields."""
         require_tool_access("update_task", instance)
         values: dict[str, Any] = {}
@@ -291,6 +295,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             values["date_deadline"] = date_deadline
         if project_id is not None:
             values["project_id"] = _positive_id(project_id, "project_id")
+        if user_ids is not None:
+            values["user_ids"] = [[6, 0, [_positive_id(user_id, "user_id") for user_id in user_ids]]]
         if not values:
             raise ValueError("Provide at least one field to update")
         api = target(instance)

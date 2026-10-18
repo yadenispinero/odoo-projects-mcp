@@ -24,7 +24,7 @@ The operator selects a configured Odoo instance on each tool call. The server do
 ## Current capabilities
 
 - Search and read projects and tasks.
-- Create and update projects and tasks with validated fields.
+- Create and update projects and tasks with validated fields, including task assignees.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.

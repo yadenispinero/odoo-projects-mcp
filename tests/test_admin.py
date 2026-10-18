@@ -4,10 +4,16 @@ import httpx
 import pytest
 from starlette.applications import Starlette
 
-from odoo_mcp.admin import create_admin_routes
+from odoo_mcp.admin import ADMIN_PAGE, ROLE_GROUPS, create_admin_routes
 from odoo_mcp.auth import MCPUser, UserDirectory
 from odoo_mcp.config import InstanceDirectory, OdooInstance
 from odoo_mcp.odoo_api import OdooApiError
+
+
+def test_task_lifecycle_roles_are_exposed_in_admin_ui():
+    roles = {role for group in ROLE_GROUPS for role in group["roles"]}
+    assert {"task_editor", "task_archiver", "project_manager"} <= roles
+    assert "task_archiver: 'Archivar y restaurar tareas'" in ADMIN_PAGE
 
 
 @pytest.fixture

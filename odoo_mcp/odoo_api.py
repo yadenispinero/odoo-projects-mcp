@@ -101,9 +101,13 @@ class OdooJson2:
     @staticmethod
     def _xmlrpc_arguments(method: str, payload: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if method == "search_read":
-            return [payload.get("domain", [])], {key: payload[key] for key in ("fields", "limit", "order") if key in payload}
+            kwargs = {key: payload[key] for key in ("fields", "limit", "order", "context") if key in payload}
+            return [payload.get("domain", [])], kwargs
         if method == "read":
-            return [payload["ids"]], {"fields": payload.get("fields", [])}
+            kwargs = {"fields": payload.get("fields", [])}
+            if "context" in payload:
+                kwargs["context"] = payload["context"]
+            return [payload["ids"]], kwargs
         if method == "create":
             vals_list = payload.get("vals_list", [])
             return [vals_list[0]], {}
@@ -112,17 +116,25 @@ class OdooJson2:
         raise OdooApiError(f"Unsupported XML-RPC method {method}")
 
     async def search_read(
-        self, model: str, domain: list, fields: list[str], limit: int, order: str = "id desc"
+        self, model: str, domain: list, fields: list[str], limit: int, order: str = "id desc",
+        context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        result = await self.call(model, "search_read", {
+        payload = {
             "domain": domain, "fields": fields, "limit": limit, "order": order,
-        })
+        }
+        if context is not None:
+            payload["context"] = context
+        result = await self.call(model, "search_read", payload)
         if not isinstance(result, list):
             raise OdooApiError(f"Unexpected response from {model}.search_read")
         return result
 
-    async def read(self, model: str, record_id: int, fields: list[str]) -> dict[str, Any]:
-        result = await self.call(model, "read", {"ids": [record_id], "fields": fields})
+    async def read(self, model: str, record_id: int, fields: list[str],
+                   context: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"ids": [record_id], "fields": fields}
+        if context is not None:
+            payload["context"] = context
+        result = await self.call(model, "read", payload)
         if not isinstance(result, list) or not result:
             raise OdooApiError(f"No {model} record found with id {record_id}")
         return result[0]

@@ -24,7 +24,10 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
             "get_page",
         }
     ),
-    "task_editor": frozenset({"create_task", "update_task"}),
+    "task_editor": frozenset({
+        "create_task", "update_task", "list_task_stages", "set_task_stage", "set_task_state",
+    }),
+    "task_archiver": frozenset({"archive_task", "unarchive_task"}),
     "website_editor": frozenset({"update_page_content"}),
     "publisher": frozenset({"publish_page", "unpublish_page"}),
     "blog_editor": frozenset({
@@ -37,7 +40,8 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     }),
 }
 ROLE_TOOLS["project_manager"] = frozenset(
-    {"search_projects", "get_project", "create_project", "update_project"}
+    {"search_projects", "get_project", "create_project", "update_project", "archive_project",
+     "unarchive_project", "list_task_stages"}
 )
 ROLE_TOOLS["administrator"] = frozenset().union(*ROLE_TOOLS.values())
 

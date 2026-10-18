@@ -13,6 +13,10 @@ from .config import InstanceDirectory, OdooInstance, load_instances
 from .odoo_api import OdooApiError, OdooJson2
 
 MAX_LIMIT = 100
+TASK_STATES = frozenset({
+    "01_in_progress", "02_changes_requested", "03_approved", "04_waiting_normal",
+    "1_done", "1_canceled",
+})
 TASK_FIELDS = ["id", "name", "project_id", "description", "user_ids", "date_deadline", "stage_id"]
 PROJECT_FIELDS = [
     "id", "name", "description", "active", "privacy_visibility", "user_id", "partner_id",
@@ -129,14 +133,18 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
-    async def search_projects(instance: str, ctx: Context, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    async def search_projects(instance: str, ctx: Context, query: str = "", limit: int = 20,
+                             include_archived: bool = False) -> list[dict[str, Any]]:
         """Search Odoo projects by name."""
         require_tool_access("search_projects", instance)
         limit = _limit(limit)
         domain = [["name", "ilike", query]] if query else []
         api = target(instance)
         try:
-            return await api.search_read("project.project", domain, PROJECT_FIELDS, limit)
+            return await api.search_read(
+                "project.project", domain, PROJECT_FIELDS, limit,
+                context={"active_test": not include_archived},
+            )
         finally:
             await api.close()
 
@@ -146,7 +154,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         require_tool_access("get_project", instance)
         api = target(instance)
         try:
-            return await api.read("project.project", _positive_id(project_id, "project_id"), PROJECT_FIELDS)
+            return await api.read("project.project", _positive_id(project_id, "project_id"), PROJECT_FIELDS,
+                                  context={"active_test": False})
         finally:
             await api.close()
 
@@ -231,8 +240,32 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
+    async def archive_project(instance: str, project_id: int, ctx: Context) -> dict[str, bool]:
+        """Archive a project by changing only its active flag."""
+        require_tool_access("archive_project", instance)
+        api = target(instance)
+        try:
+            return {"archived": await api.write(
+                "project.project", _positive_id(project_id, "project_id"), {"active": False}
+            )}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unarchive_project(instance: str, project_id: int, ctx: Context) -> dict[str, bool]:
+        """Restore an archived project by changing only its active flag."""
+        require_tool_access("unarchive_project", instance)
+        api = target(instance)
+        try:
+            return {"unarchived": await api.write(
+                "project.project", _positive_id(project_id, "project_id"), {"active": True}
+            )}
+        finally:
+            await api.close()
+
+    @mcp.tool()
     async def search_tasks(instance: str, ctx: Context, query: str = "", project_id: int | None = None,
-                          limit: int = 20) -> list[dict[str, Any]]:
+                          limit: int = 20, include_archived: bool = False) -> list[dict[str, Any]]:
         """Search Odoo tasks by name and optional project."""
         require_tool_access("search_tasks", instance)
         domain: list = []
@@ -242,7 +275,10 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             domain.append(["project_id", "=", _positive_id(project_id, "project_id")])
         api = target(instance)
         try:
-            return await api.search_read("project.task", domain, TASK_FIELDS, _limit(limit))
+            return await api.search_read(
+                "project.task", domain, TASK_FIELDS, _limit(limit),
+                context={"active_test": not include_archived},
+            )
         finally:
             await api.close()
 
@@ -252,7 +288,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         require_tool_access("get_task", instance)
         api = target(instance)
         try:
-            return await api.read("project.task", _positive_id(task_id, "task_id"), TASK_FIELDS)
+            return await api.read("project.task", _positive_id(task_id, "task_id"), TASK_FIELDS,
+                                  context={"active_test": False})
         finally:
             await api.close()
 
@@ -302,6 +339,79 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         api = target(instance)
         try:
             return {"updated": await api.write("project.task", _positive_id(task_id, "task_id"), values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def list_task_stages(instance: str, project_id: int, ctx: Context) -> list[dict[str, Any]]:
+        """List active workflow stages assigned to a project."""
+        require_tool_access("list_task_stages", instance)
+        project_id = _positive_id(project_id, "project_id")
+        api = target(instance)
+        try:
+            return await api.search_read(
+                "project.task.type",
+                [["project_ids", "=", project_id]],
+                ["id", "name", "sequence", "fold"], 100, "sequence asc, id asc",
+            )
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_task_stage(instance: str, task_id: int, stage_id: int, ctx: Context) -> dict[str, bool]:
+        """Move a task to a stage assigned to the same project."""
+        require_tool_access("set_task_stage", instance)
+        task_id = _positive_id(task_id, "task_id")
+        stage_id = _positive_id(stage_id, "stage_id")
+        api = target(instance)
+        try:
+            task = await api.read("project.task", task_id, ["id", "project_id"],
+                                  context={"active_test": False})
+            project_id = _relation_id(task.get("project_id"))
+            if project_id is None:
+                raise ValueError(f"Task {task_id} has no project, so a project stage cannot be selected")
+            stage = await api.read("project.task.type", stage_id, ["id", "project_ids"])
+            project_ids = stage.get("project_ids") or []
+            if project_id not in project_ids:
+                raise ValueError(f"Stage {stage_id} does not belong to project {project_id}")
+            return {"updated": await api.write("project.task", task_id, {"stage_id": stage_id})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_task_state(instance: str, task_id: int, state: str, ctx: Context) -> dict[str, bool]:
+        """Set a task to one of Odoo 18/19's supported workflow states."""
+        require_tool_access("set_task_state", instance)
+        task_id = _positive_id(task_id, "task_id")
+        if not isinstance(state, str) or state not in TASK_STATES:
+            raise ValueError(f"state must be one of: {', '.join(sorted(TASK_STATES))}")
+        api = target(instance)
+        try:
+            return {"updated": await api.write("project.task", task_id, {"state": state})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def archive_task(instance: str, task_id: int, ctx: Context) -> dict[str, bool]:
+        """Archive a task by changing only its active flag."""
+        require_tool_access("archive_task", instance)
+        api = target(instance)
+        try:
+            return {"archived": await api.write(
+                "project.task", _positive_id(task_id, "task_id"), {"active": False}
+            )}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unarchive_task(instance: str, task_id: int, ctx: Context) -> dict[str, bool]:
+        """Restore an archived task by changing only its active flag."""
+        require_tool_access("unarchive_task", instance)
+        api = target(instance)
+        try:
+            return {"unarchived": await api.write(
+                "project.task", _positive_id(task_id, "task_id"), {"active": True}
+            )}
         finally:
             await api.close()
 

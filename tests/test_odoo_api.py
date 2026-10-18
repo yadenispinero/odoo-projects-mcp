@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import xmlrpc.client
@@ -29,6 +31,30 @@ async def test_json2_search_read_uses_bearer_and_database_header():
     assert seen["auth"] == "Bearer secret"
     assert seen["database"] == "db1"
     assert b'"limit":10' in seen["payload"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_json2_archived_record_context_is_in_payload():
+    calls = []
+
+    def handler(request):
+        calls.append((request.url.path, request.read()))
+        if request.url.path.endswith("/search_read"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[{"id": 7, "name": "Archived"}])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
+    context = {"active_test": False}
+    await api.search_read("project.task", [], ["id"], 10, context=context)
+    await api.read("project.project", 7, ["id", "name"], context=context)
+    assert [(path, json.loads(body)) for path, body in calls] == [
+        ("/json/2/project.task/search_read", {
+            "domain": [], "fields": ["id"], "limit": 10, "order": "id desc", "context": context,
+        }),
+        ("/json/2/project.project/read", {"ids": [7], "fields": ["id", "name"], "context": context}),
+    ]
     await client.aclose()
 
 
@@ -103,7 +129,12 @@ async def test_create_rejects_unexpected_ids_response(response_value):
 @pytest.mark.parametrize(("method", "payload", "expected"), [
     ("search_read", {"domain": [["name", "ilike", "x"]], "fields": ["id"], "limit": 3, "order": "id"},
      ([[["name", "ilike", "x"]]], {"fields": ["id"], "limit": 3, "order": "id"})),
+    ("search_read", {"domain": [], "fields": ["id"], "limit": 3, "order": "id",
+                      "context": {"active_test": False}},
+     ([[]], {"fields": ["id"], "limit": 3, "order": "id", "context": {"active_test": False}})),
     ("read", {"ids": [9], "fields": ["name"]}, ([[9]], {"fields": ["name"]})),
+    ("read", {"ids": [9], "fields": ["name"], "context": {"active_test": False}},
+     ([[9]], {"fields": ["name"], "context": {"active_test": False}})),
     ("create", {"vals_list": [{"name": "X"}]}, ([{"name": "X"}], {})),
     ("write", {"ids": [9], "vals": {"name": "Y"}}, ([[9], {"name": "Y"}], {})),
 ])
@@ -159,4 +190,32 @@ async def test_xmlrpc_version_uses_common_xmlrpc_method():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     api = OdooJson2(OdooInstance("legacy", "https://odoo.example.test", api_type="xmlrpc"), client)
     assert (await api.version())["server_version"].startswith("18")
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_xmlrpc_archived_record_context_is_execute_kw_argument():
+    calls = []
+
+    def handler(request):
+        params, method = xmlrpc.client.loads(request.read())
+        if request.url.path.endswith("/common"):
+            return xmlrpc_response(7)
+        assert method == "execute_kw"
+        calls.append(params[3:])
+        return xmlrpc_response([] if params[4] == "search_read" else [{"id": 7, "name": "Archived"}])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance(
+        "legacy", "https://odoo.example.test", "secret", "db1", "xmlrpc", "user@example.test"
+    ), client)
+    context = {"active_test": False}
+    await api.search_read("project.task", [], ["id"], 10, context=context)
+    await api.read("project.project", 7, ["id", "name"], context=context)
+    assert calls == [
+        ("project.task", "search_read", [[]], {
+            "fields": ["id"], "limit": 10, "order": "id desc", "context": context,
+        }),
+        ("project.project", "read", [[7]], {"fields": ["id", "name"], "context": context}),
+    ]
     await client.aclose()

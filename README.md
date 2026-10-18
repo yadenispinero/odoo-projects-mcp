@@ -24,7 +24,7 @@ The operator selects a configured Odoo instance on each tool call. The server do
 ## Current capabilities
 
 - Search and read projects and tasks.
-- Create and update projects and tasks with validated fields, including task assignees.
+- Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
@@ -78,9 +78,10 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 
 | Role | Tools |
 | --- | --- |
-| `viewer` | Connection check and project, task, and page search/read |
-| `task_editor` | Create and update tasks |
-| `project_manager` | Search, read, create, and update projects |
+| `viewer` | Connection check and project, task, and page search/read; archived records can be included in searches |
+| `task_editor` | Create and update tasks; list project stages and change task stage/state |
+| `task_archiver` | Archive and restore tasks |
+| `project_manager` | Search, read, create, update, archive, and restore projects; list task stages |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
 | `blog_editor` | List websites and blogs; search, read, create, and edit blog posts |

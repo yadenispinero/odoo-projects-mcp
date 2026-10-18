@@ -11,7 +11,7 @@ from .odoo_api import OdooApiError, OdooJson2
 
 ROLE_GROUPS = [
     {"module": "Proyectos", "roles": ["project_manager"]},
-    {"module": "Tareas", "roles": ["task_editor"]},
+    {"module": "Tareas", "roles": ["task_editor", "task_archiver"]},
     {"module": "Sitio web", "roles": ["website_editor", "publisher"]},
     {"module": "Blog", "roles": ["blog_editor", "blog_publisher"]},
     {"module": "Acceso general", "roles": ["viewer", "administrator"]},
@@ -115,13 +115,14 @@ ADMIN_PAGE = r"""<!doctype html>
   const app = document.querySelector('#app');
   const message = document.querySelector('#message');
   const labels = {
-    viewer: 'Lectura y búsqueda de proyectos, tareas y páginas',
-    task_editor: 'Crear y actualizar tareas',
+    viewer: 'Consultar proyectos, tareas y páginas, incluidos archivados',
+    task_editor: 'Crear y actualizar tareas, cambiar etapas y estados',
+    task_archiver: 'Archivar y restaurar tareas',
     website_editor: 'Editar contenido de páginas',
     publisher: 'Publicar y despublicar páginas',
     blog_editor: 'Buscar, leer, crear y editar entradas del blog',
     blog_publisher: 'Publicar y despublicar entradas del blog',
-    project_manager: 'Consultar, crear y actualizar proyectos',
+    project_manager: 'Gestionar proyectos y consultar las etapas de sus tareas',
     administrator: 'Todos los permisos disponibles en el MCP'
   };
   let roleGroups = [];

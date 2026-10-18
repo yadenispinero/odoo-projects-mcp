@@ -85,7 +85,7 @@ async def test_update_blog_post_only_writes_allowed_content_fields(monkeypatch):
 
         async def search_read(self, model, domain, fields, limit, order="id desc"):
             assert model == "blog.post"
-            assert domain == [["id", "=", 55], ["website_id", "=", 10]]
+            assert domain == [["id", "=", 55], "|", ["website_id", "=", 10], ["website_id", "=", False]]
             return [{"id": 55}]
 
         async def write(self, model, record_id, values):
@@ -152,7 +152,7 @@ async def test_blog_publisher_uses_explicit_publication_write(monkeypatch, tool_
 
         async def search_read(self, model, domain, fields, limit, order="id desc"):
             assert model == "blog.post"
-            assert domain == [["id", "=", 55], ["website_id", "=", 10]]
+            assert domain == [["id", "=", 55], "|", ["website_id", "=", 10], ["website_id", "=", False]]
             return [{"id": 55}]
 
         async def write(self, model, record_id, values):
@@ -206,9 +206,41 @@ async def test_search_blog_posts_scopes_site_and_returns_absolute_url(monkeypatc
         current_mcp_user.reset(reset)
     assert captured["model"] == "blog.post"
     assert captured["domain"] == [
-        ["website_id", "=", 10], ["blog_id", "=", 20], "|",
-        ["name", "ilike", "a post"], ["subtitle", "ilike", "a post"],
+        "|", ["website_id", "=", 10], ["website_id", "=", False],
+        ["blog_id", "=", 20], "|", ["name", "ilike", "a post"], ["subtitle", "ilike", "a post"],
     ]
     assert "published_date" in captured["fields"]
     assert posts[0]["website_url"] == "https://news.example.test/blog/news/a-post"
+
+
+@pytest.mark.asyncio
+async def test_create_blog_post_accepts_blog_without_website(monkeypatch):
+    captured = {}
+
+    class FakeOdoo:
+        def __init__(self, instance):
+            self.instance = instance
+
+        async def read(self, model, record_id, fields):
+            assert (model, record_id, fields) == ("blog.blog", 20, ["id", "website_id"])
+            return {"id": 20, "website_id": False}
+
+        async def create(self, model, values):
+            captured.update(model=model, values=values)
+            return 56
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["create_blog_post"](
+            instance="demo", website_id=10, blog_id=20, name="Global blog post", ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {"post_id": 56}
+    assert captured["values"]["is_published"] is False
 

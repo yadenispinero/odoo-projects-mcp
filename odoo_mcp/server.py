@@ -52,14 +52,20 @@ def _relation_id(value: Any) -> int | None:
 
 async def _blog_for_website(api: OdooJson2, blog_id: int, website_id: int) -> None:
     blog = await api.read("blog.blog", blog_id, ["id", "website_id"])
-    if _relation_id(blog.get("website_id")) != website_id:
-        raise ValueError("blog_id must belong to the selected website")
+    blog_website_id = _relation_id(blog.get("website_id"))
+    if blog_website_id not in (None, website_id):
+        raise ValueError("blog_id must belong to the selected website or have no website assigned")
+
+
+def _website_domain(website_id: int) -> list:
+    """Match records assigned to this website and records shared across websites."""
+    return ["|", ["website_id", "=", website_id], ["website_id", "=", False]]
 
 
 async def _blog_post_on_website(api: OdooJson2, post_id: int, website_id: int,
                                 fields: list[str]) -> dict[str, Any]:
     posts = await api.search_read("blog.post", [
-        ["id", "=", post_id], ["website_id", "=", website_id],
+        ["id", "=", post_id], *_website_domain(website_id),
     ], fields, 1)
     if not posts:
         raise OdooApiError(f"No blog post {post_id} found on website {website_id}")
@@ -309,7 +315,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         """List blogs on one website, optionally matching a name."""
         require_tool_access("search_blogs", instance)
         website_id = _positive_id(website_id, "website_id")
-        domain: list = [["website_id", "=", website_id]]
+        domain: list = _website_domain(website_id)
         if query:
             domain.append(["name", "ilike", query])
         api = target(instance)
@@ -325,7 +331,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         """Search blog posts on the selected website; results include publish date and URL."""
         require_tool_access("search_blog_posts", instance)
         website_id = _positive_id(website_id, "website_id")
-        domain: list = [["website_id", "=", website_id]]
+        domain: list = _website_domain(website_id)
         if blog_id is not None:
             domain.append(["blog_id", "=", _positive_id(blog_id, "blog_id")])
         if query:

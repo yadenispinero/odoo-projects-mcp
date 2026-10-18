@@ -43,6 +43,9 @@ ROLE_TOOLS["administrator"] = frozenset().union(*ROLE_TOOLS.values())
 
 # Bound by the HTTP auth middleware for the lifetime of each MCP request.
 current_mcp_user: ContextVar["MCPUser | None"] = ContextVar("current_mcp_user", default=None)
+current_user_directory: ContextVar["UserDirectory | None"] = ContextVar(
+    "current_user_directory", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,14 @@ class UserDirectory:
         for user in self._records():
             if hmac.compare_digest(user.token_digest, digest):
                 return user
+        return None
+
+    def refresh_user(self, user: MCPUser) -> MCPUser | None:
+        """Read the current active identity and permissions for an authenticated request."""
+        for current in self._records():
+            if (current.username == user.username
+                    and hmac.compare_digest(current.token_digest, user.token_digest)):
+                return current
         return None
 
     def list_users(self) -> list[dict[str, object]]:
@@ -294,6 +305,11 @@ def require_tool_access(tool_name: str, instance: str | None = None) -> MCPUser:
     user = current_mcp_user.get()
     if user is None:
         raise PermissionError("Authentication required")
+    directory = current_user_directory.get()
+    if directory is not None:
+        user = directory.refresh_user(user)
+        if user is None:
+            raise PermissionError("Authentication required")
     if not user.can_use(tool_name):
         raise PermissionError(f"User {user.username!r} is not allowed to use tool {tool_name!r}")
     if instance is not None and not user.can_access_instance(instance):
@@ -328,9 +344,11 @@ class BearerAuthMiddleware:
                 await send({"type": "http.response.body", "body": body})
                 return
             user_context = current_mcp_user.set(user)
+            directory_context = current_user_directory.set(self.directory)
             try:
                 await self.app(scope, receive, send)
             finally:
+                current_user_directory.reset(directory_context)
                 current_mcp_user.reset(user_context)
             return
         await self.app(scope, receive, send)

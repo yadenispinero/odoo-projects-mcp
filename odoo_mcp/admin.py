@@ -13,6 +13,7 @@ ROLE_GROUPS = [
     {"module": "Proyectos", "roles": ["project_manager"]},
     {"module": "Tareas", "roles": ["task_editor"]},
     {"module": "Sitio web", "roles": ["website_editor", "publisher"]},
+    {"module": "Blog", "roles": ["blog_editor", "blog_publisher"]},
     {"module": "Acceso general", "roles": ["viewer", "administrator"]},
 ]
 
@@ -118,6 +119,8 @@ ADMIN_PAGE = r"""<!doctype html>
     task_editor: 'Crear y actualizar tareas',
     website_editor: 'Editar contenido de páginas',
     publisher: 'Publicar y despublicar páginas',
+    blog_editor: 'Buscar, leer, crear y editar entradas del blog',
+    blog_publisher: 'Publicar y despublicar entradas del blog',
     project_manager: 'Consultar, crear y actualizar proyectos',
     administrator: 'Todos los permisos disponibles en el MCP'
   };

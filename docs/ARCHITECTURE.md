@@ -36,7 +36,7 @@ The service receives and returns Odoo business data. If a client forwards tool r
 
 ## Tool contract
 
-Tools are specific to projects, tasks, and website pages. Each tool owns its model, method, fields, input validation, and role requirement. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page publication and unpublication are distinct tools.
+Tools are specific to projects, tasks, website pages, and blog posts. Each tool owns its model, method, fields, input validation, and role requirement. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page and blog publication and unpublication are separate tools with separate permissions. Blog operations require an explicit website ID and scope reads and mutations to that website. Blog posts expose an allowlist of content, author, tag, and SEO fields; creation sets `is_published` to false.
 
 ## Configuration
 

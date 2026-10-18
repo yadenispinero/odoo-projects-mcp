@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from typing import Any
+from urllib.parse import urljoin
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -18,6 +19,15 @@ PROJECT_FIELDS = [
     "date_start", "date",
 ]
 PAGE_FIELDS = ["id", "name", "url", "is_published", "view_id", "website_id"]
+BLOG_POST_FIELDS = [
+    "id", "name", "subtitle", "content", "blog_id", "tag_ids", "author_id", "website_id",
+    "website_meta_title", "website_meta_description", "website_meta_keywords", "website_meta_og_img",
+    "seo_name", "is_published", "post_date", "published_date", "website_url",
+]
+BLOG_POST_SEARCH_FIELDS = [
+    "id", "name", "subtitle", "blog_id", "tag_ids", "author_id", "website_id",
+    "is_published", "post_date", "published_date", "website_url",
+]
 
 
 def _limit(value: int) -> int:
@@ -30,6 +40,45 @@ def _positive_id(value: int, label: str = "id") -> int:
     if value < 1:
         raise ValueError(f"{label} must be a positive integer")
     return value
+
+
+def _relation_id(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value if value > 0 else None
+    if isinstance(value, (list, tuple)) and value and isinstance(value[0], int):
+        return value[0] if value[0] > 0 else None
+    return None
+
+
+async def _blog_for_website(api: OdooJson2, blog_id: int, website_id: int) -> None:
+    blog = await api.read("blog.blog", blog_id, ["id", "website_id"])
+    if _relation_id(blog.get("website_id")) != website_id:
+        raise ValueError("blog_id must belong to the selected website")
+
+
+async def _blog_post_on_website(api: OdooJson2, post_id: int, website_id: int,
+                                fields: list[str]) -> dict[str, Any]:
+    posts = await api.search_read("blog.post", [
+        ["id", "=", post_id], ["website_id", "=", website_id],
+    ], fields, 1)
+    if not posts:
+        raise OdooApiError(f"No blog post {post_id} found on website {website_id}")
+    return posts[0]
+
+
+async def _website_url_base(api: OdooJson2, website_id: int) -> str:
+    website = await api.read("website", website_id, ["domain"])
+    domain = website.get("domain") or api.instance.base_url
+    if isinstance(domain, str) and domain and not domain.startswith(("https://", "http://")):
+        domain = "https://" + domain
+    return domain.rstrip("/") + "/"
+
+
+def _absolute_blog_post_url(post: dict[str, Any], base_url: str) -> dict[str, Any]:
+    path = post.get("website_url")
+    if isinstance(path, str) and path:
+        post["website_url"] = urljoin(base_url, path.lstrip("/"))
+    return post
 
 
 def _validate_date(value: str, label: str) -> str:
@@ -241,6 +290,173 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         api = target(instance)
         try:
             return {"updated": await api.write("project.task", _positive_id(task_id, "task_id"), values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def list_websites(instance: str, ctx: Context, limit: int = 100) -> list[dict[str, Any]]:
+        """List Odoo websites so blog tools can target the correct site by ID."""
+        require_tool_access("list_websites", instance)
+        api = target(instance)
+        try:
+            return await api.search_read("website", [], ["id", "name", "domain"], _limit(limit), "id asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def search_blogs(instance: str, website_id: int, ctx: Context, query: str = "",
+                           limit: int = 50) -> list[dict[str, Any]]:
+        """List blogs on one website, optionally matching a name."""
+        require_tool_access("search_blogs", instance)
+        website_id = _positive_id(website_id, "website_id")
+        domain: list = [["website_id", "=", website_id]]
+        if query:
+            domain.append(["name", "ilike", query])
+        api = target(instance)
+        try:
+            return await api.search_read("blog.blog", domain, ["id", "name", "subtitle", "website_id"],
+                                         _limit(limit), "name asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def search_blog_posts(instance: str, website_id: int, ctx: Context, query: str = "",
+                                blog_id: int | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Search blog posts on the selected website; results include publish date and URL."""
+        require_tool_access("search_blog_posts", instance)
+        website_id = _positive_id(website_id, "website_id")
+        domain: list = [["website_id", "=", website_id]]
+        if blog_id is not None:
+            domain.append(["blog_id", "=", _positive_id(blog_id, "blog_id")])
+        if query:
+            domain.extend(["|", ["name", "ilike", query], ["subtitle", "ilike", query]])
+        api = target(instance)
+        try:
+            posts = await api.search_read("blog.post", domain, BLOG_POST_SEARCH_FIELDS, _limit(limit))
+            base_url = await _website_url_base(api, website_id)
+            return [_absolute_blog_post_url(post, base_url) for post in posts]
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_blog_post(instance: str, website_id: int, post_id: int,
+                            ctx: Context) -> dict[str, Any]:
+        """Read an allowlisted set of fields from one post on the selected website."""
+        require_tool_access("get_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        api = target(instance)
+        try:
+            post = await _blog_post_on_website(api, post_id, website_id, BLOG_POST_FIELDS)
+            return _absolute_blog_post_url(post, await _website_url_base(api, website_id))
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_blog_post(instance: str, website_id: int, blog_id: int, name: str,
+                               ctx: Context, subtitle: str | None = None, content: str | None = None,
+                               tag_ids: list[int] | None = None, author_id: int | None = None,
+                               website_meta_title: str | None = None,
+                               website_meta_description: str | None = None,
+                               website_meta_keywords: str | None = None,
+                               website_meta_og_img: str | None = None,
+                               seo_name: str | None = None) -> dict[str, int]:
+        """Create an unpublished blog post using only the documented content and SEO fields."""
+        require_tool_access("create_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        blog_id = _positive_id(blog_id, "blog_id")
+        if not name.strip():
+            raise ValueError("name must not be empty")
+        values: dict[str, Any] = {"name": name.strip(), "blog_id": blog_id, "is_published": False}
+        for field, value in {
+            "subtitle": subtitle, "content": content, "website_meta_title": website_meta_title,
+            "website_meta_description": website_meta_description,
+            "website_meta_keywords": website_meta_keywords, "website_meta_og_img": website_meta_og_img,
+            "seo_name": seo_name,
+        }.items():
+            if value is not None:
+                values[field] = value
+        if tag_ids is not None:
+            values["tag_ids"] = [[6, 0, [_positive_id(tag_id, "tag_id") for tag_id in tag_ids]]]
+        if author_id is not None:
+            values["author_id"] = _positive_id(author_id, "author_id")
+        api = target(instance)
+        try:
+            await _blog_for_website(api, blog_id, website_id)
+            return {"post_id": await api.create("blog.post", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_blog_post(instance: str, website_id: int, post_id: int, ctx: Context,
+                               name: str | None = None, subtitle: str | None = None,
+                               content: str | None = None, blog_id: int | None = None,
+                               tag_ids: list[int] | None = None, author_id: int | None = None,
+                               website_meta_title: str | None = None,
+                               website_meta_description: str | None = None,
+                               website_meta_keywords: str | None = None,
+                               website_meta_og_img: str | None = None,
+                               seo_name: str | None = None) -> dict[str, bool]:
+        """Edit allowlisted blog content and SEO fields; publication cannot be changed here."""
+        require_tool_access("update_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip():
+                raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        for field, value in {
+            "subtitle": subtitle, "content": content, "website_meta_title": website_meta_title,
+            "website_meta_description": website_meta_description,
+            "website_meta_keywords": website_meta_keywords, "website_meta_og_img": website_meta_og_img,
+            "seo_name": seo_name,
+        }.items():
+            if value is not None:
+                values[field] = value
+        if blog_id is not None:
+            blog_id = _positive_id(blog_id, "blog_id")
+            values["blog_id"] = blog_id
+        if tag_ids is not None:
+            values["tag_ids"] = [[6, 0, [_positive_id(tag_id, "tag_id") for tag_id in tag_ids]]]
+        if author_id is not None:
+            values["author_id"] = _positive_id(author_id, "author_id")
+        if not values:
+            raise ValueError("Provide at least one blog post field to update")
+        api = target(instance)
+        try:
+            await _blog_post_on_website(api, post_id, website_id, ["id"])
+            if blog_id is not None:
+                await _blog_for_website(api, blog_id, website_id)
+            return {"updated": await api.write("blog.post", post_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def publish_blog_post(instance: str, website_id: int, post_id: int,
+                                ctx: Context) -> dict[str, bool]:
+        """Publish a blog post on the selected website. Requires blog_publisher."""
+        require_tool_access("publish_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        api = target(instance)
+        try:
+            await _blog_post_on_website(api, post_id, website_id, ["id"])
+            return {"published": await api.write("blog.post", post_id, {"is_published": True})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unpublish_blog_post(instance: str, website_id: int, post_id: int,
+                                  ctx: Context) -> dict[str, bool]:
+        """Unpublish a blog post on the selected website. Requires blog_publisher."""
+        require_tool_access("unpublish_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        api = target(instance)
+        try:
+            await _blog_post_on_website(api, post_id, website_id, ["id"])
+            return {"unpublished": await api.write("blog.post", post_id, {"is_published": False})}
         finally:
             await api.close()
 

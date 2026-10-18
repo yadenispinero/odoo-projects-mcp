@@ -1,6 +1,6 @@
 # Odoo Projects MCP
 
-An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, and website pages.
+An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, website pages, and blog posts.
 
 > **Portfolio project:** demonstrates integration planning, API discovery, scoped tool design, role-based access, Docker deployment, and security trade-off documentation. It is a prototype and has not been independently audited or certified for regulatory compliance.
 
@@ -26,6 +26,7 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Search and read projects and tasks.
 - Create and update projects and tasks with validated fields.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
+- List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
 - Manage Odoo connections, users, roles, token rotation, and revocation in a local admin page.
 - Connect to Odoo 19 through its JSON-2 API over HTTPS.
@@ -82,6 +83,8 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `project_manager` | Search, read, create, and update projects |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
+| `blog_editor` | List websites and blogs; search, read, create, and edit blog posts |
+| `blog_publisher` | List websites and blogs; search, read, publish, and unpublish blog posts |
 | `administrator` | All currently registered tools and user administration |
 
 Roles can be combined for a user. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.

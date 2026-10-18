@@ -122,7 +122,7 @@ ADMIN_PAGE = r"""<!doctype html>
     publisher: 'Publicar y despublicar páginas',
     blog_editor: 'Buscar, leer, crear y editar entradas del blog',
     blog_publisher: 'Publicar y despublicar entradas del blog',
-    project_manager: 'Gestionar proyectos y consultar las etapas de sus tareas',
+    project_manager: 'Consultar, crear, actualizar, archivar y desarchivar proyectos; consultar etapas de tareas',
     administrator: 'Todos los permisos disponibles en el MCP'
   };
   let roleGroups = [];

@@ -23,6 +23,11 @@ class OdooJson2:
             await self.client.aclose()
 
     async def version(self) -> dict[str, Any]:
+        if self.instance.api_type == "xmlrpc":
+            result = await self._xmlrpc_request("/xmlrpc/2/common", "version", ())
+            if not isinstance(result, dict):
+                raise OdooApiError("Odoo returned an unexpected XML-RPC version response")
+            return result
         try:
             response = await self.client.get(f"{self.instance.base_url}/web/version")
             response.raise_for_status()

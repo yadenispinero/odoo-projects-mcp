@@ -63,6 +63,18 @@ def load_instances(path: str | None = None) -> dict[str, OdooInstance]:
             api_type=item.get("api_type", "json2"),
             username=item.get("username"),
         )
+        if not isinstance(instances[name].api_type, str) or instances[name].api_type not in {"json2", "xmlrpc"}:
+            raise ValueError(f"Instance {name!r} api_type must be json2 or xmlrpc")
+        if instances[name].username is not None and not isinstance(instances[name].username, str):
+            raise ValueError(f"Instance {name!r} username must be text")
+        if instances[name].api_type == "xmlrpc" and (
+            not isinstance(instances[name].database, str) or not instances[name].database.strip()
+        ):
+            raise ValueError(f"Instance {name!r} requires a database for XML-RPC")
+        if instances[name].api_type == "xmlrpc" and (
+            not isinstance(instances[name].username, str) or not instances[name].username.strip()
+        ):
+            raise ValueError(f"Instance {name!r} requires a username/login for XML-RPC")
     return instances
 
 
@@ -110,7 +122,7 @@ class InstanceDirectory:
                 raise ValueError(f"Instance {normalized_name!r} API key must be text")
             if not isinstance(active, bool):
                 raise ValueError(f"Instance {normalized_name!r} active flag must be boolean")
-            if api_type not in {"json2", "xmlrpc"}:
+            if not isinstance(api_type, str) or api_type not in {"json2", "xmlrpc"}:
                 raise ValueError(f"Instance {normalized_name!r} api_type must be json2 or xmlrpc")
             if username is not None and not isinstance(username, str):
                 raise ValueError(f"Instance {normalized_name!r} username must be text")
@@ -175,7 +187,7 @@ class InstanceDirectory:
             raise ValueError("API key must be text")
         if isinstance(api_key, str) and len(api_key) > 4096:
             raise ValueError("API key is too long")
-        if api_type not in {"json2", "xmlrpc"}:
+        if not isinstance(api_type, str) or api_type not in {"json2", "xmlrpc"}:
             raise ValueError("API type must be json2 or xmlrpc")
         if username is not None and not isinstance(username, str):
             raise ValueError("Username must be text")
@@ -184,6 +196,8 @@ class InstanceDirectory:
             normalized_username = self._records[normalized_name].get("username")
         if api_type == "xmlrpc" and not normalized_username:
             raise ValueError("A username/login is required for XML-RPC connections")
+        if api_type == "xmlrpc" and not normalized_database:
+            raise ValueError("A database is required for XML-RPC connections")
         previous = self._records.get(normalized_name, {})
         key = None if clear_api_key else ((api_key.strip() if api_key and api_key.strip() else None)
                                           or previous.get("api_key"))

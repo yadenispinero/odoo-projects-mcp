@@ -1,8 +1,13 @@
 import httpx
 import pytest
+import xmlrpc.client
 
 from odoo_mcp.config import OdooInstance
 from odoo_mcp.odoo_api import OdooApiError, OdooJson2
+
+
+def xmlrpc_response(value):
+    return httpx.Response(200, content=xmlrpc.client.dumps((value,), methodresponse=True).encode())
 
 
 @pytest.mark.asyncio
@@ -59,4 +64,66 @@ async def test_create_uses_json2_vals_list_shape():
     api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
     assert await api.create("project.task", {"name": "Test"}) == 42
     assert b'"vals_list":[{"name":"Test"}]' in seen["payload"]
+    await client.aclose()
+
+
+@pytest.mark.parametrize(("method", "payload", "expected"), [
+    ("search_read", {"domain": [["name", "ilike", "x"]], "fields": ["id"], "limit": 3, "order": "id"},
+     ([[["name", "ilike", "x"]]], {"fields": ["id"], "limit": 3, "order": "id"})),
+    ("read", {"ids": [9], "fields": ["name"]}, ([[9]], {"fields": ["name"]})),
+    ("create", {"vals_list": [{"name": "X"}]}, ([{"name": "X"}], {})),
+    ("write", {"ids": [9], "vals": {"name": "Y"}}, ([[9], {"name": "Y"}], {})),
+])
+def test_xmlrpc_operation_arguments(method, payload, expected):
+    assert OdooJson2._xmlrpc_arguments(method, payload) == expected
+
+
+@pytest.mark.asyncio
+async def test_xmlrpc_login_failure_stops_before_model_call():
+    requests = []
+
+    def handler(request):
+        requests.append(request.url.path)
+        return xmlrpc_response(False)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("legacy", "https://odoo.example.test", "secret", "db1",
+                                  "xmlrpc", "user@example.test"), client)
+    with pytest.raises(OdooApiError, match="authentication failed"):
+        await api.search_read("project.project", [], ["id"], 1)
+    assert requests == ["/xmlrpc/2/common"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_xmlrpc_fault_does_not_expose_api_key():
+    secret = "top-secret-api-key"
+
+    def handler(request):
+        return httpx.Response(200, content=xmlrpc.client.dumps(
+            xmlrpc.client.Fault(1, f"failure included {secret}"),
+            methodresponse=True,
+        ).encode())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("legacy", "https://odoo.example.test", secret, "db1",
+                                  "xmlrpc", "user@example.test"), client)
+    with pytest.raises(OdooApiError) as exc:
+        await api.version()
+    assert secret not in str(exc.value)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_xmlrpc_version_uses_common_xmlrpc_method():
+    def handler(request):
+        params, method = xmlrpc.client.loads(request.read())
+        assert request.url.path == "/xmlrpc/2/common"
+        assert method == "version"
+        assert params == ()
+        return xmlrpc_response({"server_version": "18.0+e", "server_version_info": [18, 0, 0]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("legacy", "https://odoo.example.test", api_type="xmlrpc"), client)
+    assert (await api.version())["server_version"].startswith("18")
     await client.aclose()

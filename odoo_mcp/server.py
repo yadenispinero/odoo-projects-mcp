@@ -63,7 +63,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def check_odoo_connection(instance: str, ctx: Context) -> dict[str, Any]:
-        """Read the public Odoo version endpoint for a named instance; no writes or credentials are used."""
+        """Read the public Odoo version endpoint for a named instance; no writes are made."""
         require_tool_access("check_odoo_connection", instance)
         api = target(instance)
         try:

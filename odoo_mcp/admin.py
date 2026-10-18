@@ -51,7 +51,10 @@ ADMIN_PAGE = r"""<!doctype html>
     button { border: 0; border-radius: 6px; background: #185abd; color: white; padding: 10px 14px; cursor: pointer; margin: 8px 8px 0 0; }
     button.danger { background: #a32626; } button.secondary { background: #566273; }
     .hidden { display: none; } .token { overflow-wrap: anywhere; padding: 12px; background: #edf7ed; border: 1px solid #9bc99b; border-radius: 6px; }
-    .error { color: #a32626; white-space: pre-wrap; } .user h3 { margin: 0; }
+    .error { color: #a32626; white-space: pre-wrap; }
+    .notice { margin: 12px 0; padding: 10px 12px; border: 1px solid #9bc99b; border-radius: 6px; color: #185b28; background: #edf7ed; }
+    .notice.error { border-color: #d99; color: #a32626; background: #fff1f1; }
+    .user h3 { margin: 0; }
     @media (max-width: 760px) {
       body { padding: 18px 12px 40px; }
       #app.admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "instances" "users" "add"; }
@@ -102,9 +105,8 @@ ADMIN_PAGE = r"""<!doctype html>
       <button id="create-user">Create user and generate token</button>
       <div id="created-token" class="hidden"></div>
     </aside>
-    <section id="users-panel"><h2>Enabled users</h2><div id="users"></div></section>
+    <section id="users-panel"><h2>Enabled users</h2><p id="message" class="notice hidden" role="status" aria-live="polite"></p><div id="users"></div></section>
   </main>
-  <p id="message" class="error"></p>
 <script>
 (() => {
   const tokenKey = 'odoo-mcp-admin-token';
@@ -127,6 +129,10 @@ ADMIN_PAGE = r"""<!doctype html>
   let editingInstanceActive = true;
   let testedInstancePayload = null;
   const token = () => sessionStorage.getItem(tokenKey) || '';
+  const notify = (text, isError = false) => {
+    message.textContent = text;
+    message.className = isError ? 'notice error' : 'notice';
+  };
   const api = async (path, options = {}) => {
     const response = await fetch('/admin/api' + path, {
       ...options,
@@ -212,8 +218,8 @@ ADMIN_PAGE = r"""<!doctype html>
         if (item.active && !confirm('Deactivate ' + item.name + '? MCP requests to this instance will stop. Existing user access assignments are retained.')) return;
         try {
           await api('/instances/' + encodeURIComponent(item.name) + '/status', {method:'PUT', body:JSON.stringify({active:!item.active})});
-          await loadInstances(); await loadUsers(); message.textContent = item.active ? 'Instance deactivated.' : 'Instance reactivated.';
-        } catch (error) { message.textContent = error.message; }
+          await loadInstances(); await loadUsers(); notify(item.active ? 'Instance deactivated.' : 'Instance reactivated.');
+        } catch (error) { notify(error.message, true); }
       });
       card.append(heading,url,database,apiType,credential,edit,toggle); list.append(card);
     }
@@ -227,7 +233,7 @@ ADMIN_PAGE = r"""<!doctype html>
     if (event.target.checked && !editingInstanceActive) {
       testedInstancePayload = instancePayloadKey();
       document.querySelector('#save-instance').disabled = false;
-      message.textContent = 'This inactive instance can have its saved key removed without a connection test.';
+      notify('This inactive instance can have its saved key removed without a connection test.');
     }
   });
   for (const selector of ['#instance-name', '#instance-url', '#instance-api-type', '#instance-database', '#instance-username', '#instance-api-key']) {
@@ -241,14 +247,14 @@ ADMIN_PAGE = r"""<!doctype html>
       if (testedPayload !== instancePayloadKey()) throw new Error('Settings changed during the test. Test again before saving.');
       testedInstancePayload = testedPayload;
       document.querySelector('#save-instance').disabled = false;
-      message.textContent = result.message;
-    } catch (error) { message.textContent = error.message; }
+      notify(result.message);
+    } catch (error) { notify(error.message, true); }
   });
   document.querySelector('#save-instance').addEventListener('click', async () => {
     const payload = instancePayload();
     if (testedInstancePayload !== JSON.stringify(payload)) {
       invalidateInstanceTest();
-      message.textContent = 'Test the current connection settings successfully before saving.';
+      notify('Test the current connection settings successfully before saving.', true);
       return;
     }
     if (payload.clear_api_key && !confirm('Remove the saved API key from this inactive instance?')) return;
@@ -260,8 +266,8 @@ ADMIN_PAGE = r"""<!doctype html>
       } else {
         await api('/instances', {method:'POST', body:JSON.stringify(payload)});
       }
-      resetInstanceForm(); await loadInstances(); await loadUsers(); message.textContent = 'Instance saved.';
-    } catch (error) { message.textContent = error.message; }
+      resetInstanceForm(); await loadInstances(); await loadUsers(); notify('Instance saved.');
+    } catch (error) { notify(error.message, true); }
   });
   const drawRoleBoxes = (container, chosen = []) => {
     container.replaceChildren();
@@ -290,8 +296,8 @@ ADMIN_PAGE = r"""<!doctype html>
       const roleBox = document.createElement('div'); drawRoleBoxes(roleBox, user.roles);
       const save = document.createElement('button'); save.textContent = 'Save roles';
       save.addEventListener('click', async () => {
-        try { await api('/users/' + encodeURIComponent(user.username), { method: 'PATCH', body: JSON.stringify({roles: selectedRoles(roleBox)}) }); await loadUsers(); message.textContent = 'Roles saved.'; }
-        catch (error) { message.textContent = error.message; }
+        try { await api('/users/' + encodeURIComponent(user.username), { method: 'PATCH', body: JSON.stringify({roles: selectedRoles(roleBox)}) }); await loadUsers(); notify('Roles saved.'); }
+        catch (error) { notify(error.message, true); }
       });
       card.append(heading, roleBox, save);
       const instanceLabel = document.createElement('label'); instanceLabel.textContent = 'Allowed Odoo instances';
@@ -299,8 +305,8 @@ ADMIN_PAGE = r"""<!doctype html>
       instanceInput.value = (user.instances || ['*']).join(', '); instanceInput.autocomplete = 'off';
       const instanceSave = document.createElement('button'); instanceSave.textContent = 'Save instance access'; instanceSave.className = 'secondary';
       instanceSave.addEventListener('click', async () => {
-        try { await api('/users/' + encodeURIComponent(user.username) + '/instances', { method: 'PUT', body: JSON.stringify({instances: parseInstances(instanceInput)}) }); await loadUsers(); message.textContent = 'Instance access saved.'; }
-        catch (error) { message.textContent = error.message; }
+        try { await api('/users/' + encodeURIComponent(user.username) + '/instances', { method: 'PUT', body: JSON.stringify({instances: parseInstances(instanceInput)}) }); await loadUsers(); notify('Instance access saved.'); }
+        catch (error) { notify(error.message, true); }
       });
       card.append(instanceLabel, instanceInput, instanceSave);
       const rotate = document.createElement('button'); rotate.textContent = 'Rotate token'; rotate.className = 'secondary';
@@ -309,14 +315,14 @@ ADMIN_PAGE = r"""<!doctype html>
         try {
           const result = await api('/users/' + encodeURIComponent(user.username) + '/rotate-token', { method: 'POST' });
           const tokenPanel = document.createElement('p'); tokenPanel.className = 'token'; tokenPanel.textContent = result.token + ' — copy now; it will not be shown again.';
-          card.append(tokenPanel); message.textContent = 'Token rotated.';
-        } catch (error) { message.textContent = error.message; }
+          card.append(tokenPanel); notify('Token rotated.');
+        } catch (error) { notify(error.message, true); }
       });
       const revoke = document.createElement('button'); revoke.textContent = 'Revoke access'; revoke.className = 'danger';
       revoke.addEventListener('click', async () => {
         if (!confirm('Revoke access for ' + user.username + '? Their token will stop working immediately.')) return;
-        try { await api('/users/' + encodeURIComponent(user.username), { method: 'DELETE' }); await loadUsers(); message.textContent = 'Access revoked.'; }
-        catch (error) { message.textContent = error.message; }
+        try { await api('/users/' + encodeURIComponent(user.username), { method: 'DELETE' }); await loadUsers(); notify('Access revoked.'); }
+        catch (error) { notify(error.message, true); }
       });
       card.append(rotate, revoke);
       list.append(card);
@@ -361,8 +367,8 @@ ADMIN_PAGE = r"""<!doctype html>
       const value = document.createElement('p'); value.className = 'token'; value.textContent = data.token;
       const copy = document.createElement('button'); copy.textContent = 'Copy token'; copy.addEventListener('click', async () => { await navigator.clipboard.writeText(data.token); copy.textContent = 'Copied'; });
       output.append(note, value, copy); output.classList.remove('hidden');
-      document.querySelector('#new-username').value = ''; await loadUsers(); message.textContent = 'User created.';
-    } catch (error) { message.textContent = error.message; }
+      document.querySelector('#new-username').value = ''; await loadUsers(); notify('User created.');
+    } catch (error) { notify(error.message, true); }
   });
   if (token()) enter();
 })();

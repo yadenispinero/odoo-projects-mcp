@@ -90,6 +90,8 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 
 Roles can be combined for a user. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
 
+Archiving a project also archives all its tasks. Restoring the project restores all its tasks too, including tasks that were already archived individually before the project was archived.
+
 ## Development
 
 Run the unit suite in Docker:

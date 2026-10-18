@@ -205,15 +205,16 @@ async def test_set_task_state_rejects_non_odoo_states(monkeypatch):
     tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
     reset = current_mcp_user.set(task_editor())
     try:
-        with pytest.raises(ValueError, match="state must be one of"):
-            await tools["set_task_state"](instance="demo", task_id=10, state="done", ctx=None)
+        for state in ("done", "04_waiting_normal"):
+            with pytest.raises(ValueError, match="state must be one of"):
+                await tools["set_task_state"](instance="demo", task_id=10, state=state, ctx=None)
     finally:
         current_mcp_user.reset(reset)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", [
-    "01_in_progress", "02_changes_requested", "03_approved", "04_waiting_normal", "1_done", "1_canceled",
+    "01_in_progress", "02_changes_requested", "03_approved", "1_done", "1_canceled",
 ])
 async def test_set_task_state_writes_only_an_allowed_state(monkeypatch, state):
     calls = []
@@ -319,7 +320,7 @@ async def test_search_archived_option_sets_active_test_context(monkeypatch, enti
             self.instance = instance
 
         async def search_read(self, model_name, domain, fields, limit, order="id desc", context=None):
-            calls.append((model_name, context))
+            calls.append((model_name, fields, context))
             rows = [{"id": 1, "active": True}, {"id": 2, "active": False}]
             return rows if context["active_test"] is False else [row for row in rows if row["active"]]
 
@@ -337,7 +338,9 @@ async def test_search_archived_option_sets_active_test_context(monkeypatch, enti
 
     assert [row["id"] for row in default_rows] == [1]
     assert [row["id"] for row in archived_rows] == [1, 2]
-    assert calls == [(model, {"active_test": True}), (model, {"active_test": False})]
+    assert [call[0] for call in calls] == [model, model]
+    assert all("active" in call[1] and "state" in call[1] for call in calls if entity == "task")
+    assert [call[2] for call in calls] == [{"active_test": True}, {"active_test": False}]
 
 
 @pytest.mark.asyncio
@@ -364,7 +367,7 @@ async def test_get_archived_task_and_project_use_active_test_false(monkeypatch):
     finally:
         current_mcp_user.reset(reset)
     assert calls == [
-        ("project.task", 10, ["id", "name", "project_id", "description", "user_ids", "date_deadline", "stage_id"],
+        ("project.task", 10, ["id", "name", "project_id", "description", "user_ids", "date_deadline", "stage_id", "active", "state"],
          {"active_test": False}),
         ("project.project", 20, ["id", "name", "description", "active", "privacy_visibility", "user_id", "partner_id",
                                   "date_start", "date"], {"active_test": False}),

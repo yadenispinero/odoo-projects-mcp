@@ -14,10 +14,11 @@ from .odoo_api import OdooApiError, OdooJson2
 
 MAX_LIMIT = 100
 TASK_STATES = frozenset({
-    "01_in_progress", "02_changes_requested", "03_approved", "04_waiting_normal",
-    "1_done", "1_canceled",
+    "01_in_progress", "02_changes_requested", "03_approved", "1_done", "1_canceled",
 })
-TASK_FIELDS = ["id", "name", "project_id", "description", "user_ids", "date_deadline", "stage_id"]
+TASK_FIELDS = [
+    "id", "name", "project_id", "description", "user_ids", "date_deadline", "stage_id", "active", "state",
+]
 PROJECT_FIELDS = [
     "id", "name", "description", "active", "privacy_visibility", "user_id", "partner_id",
     "date_start", "date",
@@ -241,7 +242,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def archive_project(instance: str, project_id: int, ctx: Context) -> dict[str, bool]:
-        """Archive a project by changing only its active flag."""
+        """Archive a project and all its tasks by changing its active flag."""
         require_tool_access("archive_project", instance)
         api = target(instance)
         try:
@@ -253,7 +254,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def unarchive_project(instance: str, project_id: int, ctx: Context) -> dict[str, bool]:
-        """Restore an archived project by changing only its active flag."""
+        """Restore a project and all its tasks, including tasks archived individually beforehand."""
         require_tool_access("unarchive_project", instance)
         api = target(instance)
         try:

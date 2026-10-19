@@ -260,7 +260,8 @@ async def test_get_blog_post_reads_selected_translation(monkeypatch):
         instance = OdooInstance("demo", "https://odoo.example.test")
         def __init__(self, instance): self.instance = instance
         async def search_read(self, model, domain, fields, limit, order="id desc"):
-            return [{"id": 55}]
+            if model == "blog.post": return [{"id": 55}]
+            return [{"id": 9, "code": "sr@latin"}]
         async def read(self, model, record_id, fields, context=None):
             captured.setdefault("reads", []).append((model, record_id, context))
             if model == "blog.post": return {"id": 55, "name": "Título", "website_url": "/blog/x"}
@@ -272,18 +273,38 @@ async def test_get_blog_post_reads_selected_translation(monkeypatch):
     reset = current_mcp_user.set(mcp_user("blog_editor"))
     try:
         post = await tools["get_blog_post"](
-            instance="demo", website_id=10, post_id=55, lang="es_ES", ctx=None,
+            instance="demo", website_id=10, post_id=55, lang="sr@latin", ctx=None,
         )
     finally:
         current_mcp_user.reset(reset)
     assert post["name"] == "Título"
     assert post["website_url"] == "https://news.example.test/blog/x"
-    assert ("blog.post", 55, {"lang": "es_ES"}) in captured["reads"]
+    assert ("blog.post", 55, {"lang": "sr@latin"}) in captured["reads"]
+
+
+@pytest.mark.asyncio
+async def test_get_blog_post_rejects_uninstalled_language_with_clear_error(monkeypatch):
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 55}] if model == "blog.post" else []
+        async def close(self): pass
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(ValueError, match="Language fr_FR is not installed or active"):
+            await tools["get_blog_post"](
+                instance="demo", website_id=10, post_id=55, lang="fr_FR", ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
-async def test_set_blog_post_translation_uses_active_website_language_and_context(monkeypatch, api_type):
+@pytest.mark.parametrize("lang", ["es_ES", "es_419", "sr@latin"])
+async def test_set_blog_post_translation_uses_active_website_language_and_context(monkeypatch, api_type, lang):
     captured = {}
 
     class FakeOdoo:
@@ -295,11 +316,11 @@ async def test_set_blog_post_translation_uses_active_website_language_and_contex
                 assert domain == [["id", "=", 55], "|", ["website_id", "=", 10], ["website_id", "=", False]]
                 return [{"id": 55}]
             assert model == "res.lang"
-            return [{"id": 2, "code": "es_ES"}, {"id": 3, "code": "de_DE"}]
+            return [{"id": 2, "code": lang}, {"id": 3, "code": "de_DE"}]
 
         async def read(self, model, record_id, fields, context=None):
             assert (model, record_id, fields) == ("website", 10, ["language_ids"])
-            return {"language_ids": [[2, "es_ES"]]}
+            return {"language_ids": [[2, lang]]}
 
         async def write(self, model, record_id, values, context=None):
             captured.update(model=model, record_id=record_id, values=values, context=context)
@@ -313,14 +334,14 @@ async def test_set_blog_post_translation_uses_active_website_language_and_contex
     reset = current_mcp_user.set(mcp_user("blog_editor"))
     try:
         result = await tools["set_blog_post_translation"](
-            instance="demo", website_id=10, post_id=55, lang="es_ES", name="Título",
+            instance="demo", website_id=10, post_id=55, lang=lang, name="Título",
             subtitle="Subtítulo", content="<p>Texto</p>", website_meta_title="SEO",
             website_meta_description="Descripción", website_meta_keywords="palabras", seo_name="titulo", ctx=None,
         )
     finally:
         current_mcp_user.reset(reset)
     assert result == {"updated": True}
-    assert captured["context"] == {"lang": "es_ES"}
+    assert captured["context"] == {"lang": lang}
     assert captured["values"]["content"] == "<p>Texto</p>"
     assert "is_published" not in captured["values"]
 

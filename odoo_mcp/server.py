@@ -131,6 +131,12 @@ def _validate_date(value: str, label: str) -> str:
     return value
 
 
+def _validate_lang_code(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z]{2,3}(?:_[A-Z]{2}|_[0-9]{3})?(?:@[a-z]+)?", value):
+        raise ValueError("lang must use Odoo res.lang.code format, for example es_ES, es_419, or sr@latin")
+    return value
+
+
 def _future_blog_date(value: str) -> tuple[datetime, str]:
     if not isinstance(value, str):
         raise ValueError("post_date must be an ISO 8601 datetime with a timezone or UTC")
@@ -528,10 +534,17 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         require_tool_access("get_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
+        if lang is not None:
+            _validate_lang_code(lang)
         api = target(instance)
         try:
             post = await _blog_post_on_website(api, post_id, website_id, BLOG_POST_FIELDS)
             if lang is not None:
+                languages = await api.search_read(
+                    "res.lang", [["code", "=", lang], ["active", "=", True]], ["id", "code"], 1
+                )
+                if not languages:
+                    raise ValueError(f"Language {lang} is not installed or active in Odoo")
                 post = await api.read("blog.post", post_id, BLOG_POST_FIELDS, context={"lang": lang})
             return _absolute_blog_post_url(post, await _website_url_base(api, website_id))
         finally:
@@ -547,8 +560,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         require_tool_access("set_blog_post_translation", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
-        if not isinstance(lang, str) or not re.fullmatch(r"[a-z]{2,3}_[A-Z]{2,3}", lang):
-            raise ValueError("lang must be a language code such as es_ES or de_DE")
+        _validate_lang_code(lang)
         api = target(instance)
         try:
             post = await _blog_post_on_website(api, post_id, website_id, ["id"])

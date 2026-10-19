@@ -565,8 +565,12 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         try:
             post = await _blog_post_on_website(api, post_id, website_id, ["id"])
             website = await api.read("website", website_id, ["language_ids"])
-            language_ids = [item[0] for item in website.get("language_ids", [])
-                            if isinstance(item, (list, tuple)) and item and isinstance(item[0], int)]
+            language_ids = [
+                item if isinstance(item, int) and not isinstance(item, bool)
+                else item[0] for item in website.get("language_ids", [])
+                if (isinstance(item, int) and not isinstance(item, bool))
+                or (isinstance(item, (list, tuple)) and item and isinstance(item[0], int))
+            ]
             languages = await api.search_read("res.lang", [["active", "=", True]], ["id", "code"], 1000)
             active_codes = {item.get("code") for item in languages if item.get("id") in language_ids}
             if lang not in active_codes:

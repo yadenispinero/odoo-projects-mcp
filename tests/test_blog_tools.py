@@ -320,7 +320,7 @@ async def test_set_blog_post_translation_uses_active_website_language_and_contex
 
         async def read(self, model, record_id, fields, context=None):
             assert (model, record_id, fields) == ("website", 10, ["language_ids"])
-            return {"language_ids": [[2, lang]]}
+            return {"language_ids": [2]}
 
         async def write(self, model, record_id, values, context=None):
             captured.update(model=model, record_id=record_id, values=values, context=context)

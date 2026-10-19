@@ -40,6 +40,8 @@ async def test_json2_archived_record_context_is_in_payload():
 
     def handler(request):
         calls.append((request.url.path, request.read()))
+        if request.url.path.endswith("/res.users/context_get"):
+            return httpx.Response(200, json={"lang": "es_419"})
         if request.url.path.endswith("/search_read"):
             return httpx.Response(200, json=[])
         return httpx.Response(200, json=[{"id": 7, "name": "Archived"}])
@@ -50,10 +52,14 @@ async def test_json2_archived_record_context_is_in_payload():
     await api.search_read("project.task", [], ["id"], 10, context=context)
     await api.read("project.project", 7, ["id", "name"], context=context)
     assert [(path, json.loads(body)) for path, body in calls] == [
+        ("/json/2/res.users/context_get", {}),
         ("/json/2/project.task/search_read", {
-            "domain": [], "fields": ["id"], "limit": 10, "order": "id desc", "context": context,
+            "domain": [], "fields": ["id"], "limit": 10, "order": "id desc",
+            "context": {**context, "lang": "es_419"},
         }),
-        ("/json/2/project.project/read", {"ids": [7], "fields": ["id", "name"], "context": context}),
+        ("/json/2/project.project/read", {
+            "ids": [7], "fields": ["id", "name"], "context": {**context, "lang": "es_419"},
+        }),
     ]
     await client.aclose()
 
@@ -103,7 +109,10 @@ async def test_create_accepts_xmlrpc_scalar_id():
             return xmlrpc_response(7)
         assert request.url.path.endswith("/object")
         assert method == "execute_kw"
+        if params[3:5] == ("res.users", "context_get"):
+            return xmlrpc_response({"lang": "es_419"})
         assert params[3:6] == ("project.task", "create", [{"name": "Test"}])
+        assert params[6] == {"context": {"lang": "es_419"}}
         return xmlrpc_response(42)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -149,12 +158,15 @@ def test_xmlrpc_operation_arguments(method, payload, expected):
 async def test_json2_unlink_uses_ids_and_returns_true():
     seen = {}
     def handler(request):
-        seen["payload"] = json.loads(request.read())
+        payload = json.loads(request.read())
+        if request.url.path.endswith("/context_get"):
+            return httpx.Response(200, json={"lang": "es_419"})
+        seen["payload"] = payload
         return httpx.Response(200, json=True)
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
     assert await api.unlink("ir.attachment", 9) is True
-    assert seen["payload"] == {"ids": [9]}
+    assert seen["payload"] == {"ids": [9], "context": {"lang": "es_419"}}
     await client.aclose()
 
 
@@ -165,7 +177,10 @@ async def test_xmlrpc_unlink_uses_ids_argument():
         if request.url.path.endswith("/common"):
             assert method == "authenticate"
             return xmlrpc_response(7)
+        if params[3:5] == ("res.users", "context_get"):
+            return xmlrpc_response({"lang": "es_419"})
         assert (params[3], params[4], params[5]) == ("ir.attachment", "unlink", [[9]])
+        assert params[6] == {"context": {"lang": "es_419"}}
         return xmlrpc_response(True)
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     api = OdooJson2(OdooInstance(
@@ -180,7 +195,10 @@ async def test_json2_write_preserves_language_context():
     seen = {}
 
     def handler(request):
-        seen["payload"] = json.loads(request.read())
+        payload = json.loads(request.read())
+        if request.url.path.endswith("/context_get"):
+            return httpx.Response(200, json={"lang": "es_419"})
+        seen["payload"] = payload
         return httpx.Response(200, json=True)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -189,6 +207,46 @@ async def test_json2_write_preserves_language_context():
     assert seen["payload"] == {
         "ids": [9], "vals": {"name": "Título"}, "context": {"lang": "es_ES"},
     }
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+@pytest.mark.parametrize(
+    ("explicit_context", "expected_lang"),
+    [(None, "es_419"), ({"lang": "de_DE"}, "de_DE")],
+)
+async def test_write_uses_default_user_language_and_explicit_context_overrides(
+    api_type, explicit_context, expected_lang,
+):
+    model_payloads = []
+
+    def handler(request):
+        if api_type == "json2":
+            payload = json.loads(request.read())
+            if request.url.path.endswith("/res.users/context_get"):
+                return httpx.Response(200, json={"lang": "es_419"})
+            model_payloads.append(payload)
+            return httpx.Response(200, json=True)
+
+        params, method = xmlrpc.client.loads(request.read())
+        if request.url.path.endswith("/common"):
+            return xmlrpc_response(7)
+        if params[3:5] == ("res.users", "context_get"):
+            return xmlrpc_response({"lang": "es_419"})
+        model_payloads.append(params[6])
+        return xmlrpc_response(True)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance(
+        "test", "https://odoo.example.test", "secret", "db1",
+        api_type, "user@example.test" if api_type == "xmlrpc" else None,
+    ), client)
+    assert await api.write("blog.post", 29, {"name": "Título"}, context=explicit_context) is True
+    assert model_payloads == [
+        {"ids": [29], "vals": {"name": "Título"}, "context": {"lang": expected_lang}}
+        if api_type == "json2" else {"context": {"lang": expected_lang}}
+    ]
     await client.aclose()
 
 
@@ -252,6 +310,8 @@ async def test_xmlrpc_archived_record_context_is_execute_kw_argument():
         if request.url.path.endswith("/common"):
             return xmlrpc_response(7)
         assert method == "execute_kw"
+        if params[3:5] == ("res.users", "context_get"):
+            return xmlrpc_response({"lang": "es_419"})
         calls.append(params[3:])
         return xmlrpc_response([] if params[4] == "search_read" else [{"id": 7, "name": "Archived"}])
 
@@ -264,8 +324,10 @@ async def test_xmlrpc_archived_record_context_is_execute_kw_argument():
     await api.read("project.project", 7, ["id", "name"], context=context)
     assert calls == [
         ("project.task", "search_read", [[]], {
-            "fields": ["id"], "limit": 10, "order": "id desc", "context": context,
+            "fields": ["id"], "limit": 10, "order": "id desc", "context": {**context, "lang": "es_419"},
         }),
-        ("project.project", "read", [[7]], {"fields": ["id", "name"], "context": context}),
+        ("project.project", "read", [[7]], {
+            "fields": ["id", "name"], "context": {**context, "lang": "es_419"},
+        }),
     ]
     await client.aclose()

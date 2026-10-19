@@ -42,6 +42,8 @@ The Odoo connector reads the connection user's context with `res.users.context_g
 
 HTML blog content uses Odoo's term-level translation methods. Read the primary-language terms with `get_blog_post_translation_terms`, then pass only existing source terms and their translations as `content_terms` to `set_blog_post_translation`; other translatable fields are still written with the explicit language context.
 
+Blog tools also accept the content generator's marked text (`content_format="marked_text"` on create/update, `content_marked_text` on `set_blog_post_translation`). `odoo_mcp/marked_text.py` is a pure conversion module: `H1:` becomes the name unless one is passed, `H2:`–`H6:` headings, `•`/`-`/`*` and numbered lines lists, other blocks paragraphs, and bare URLs links, after cleaning the Google Docs export and escaping `&`, `<` and `>`. It never adds or removes content, so selection and editorial decisions stay in the client. For translations, the module pairs translated blocks with the primary-language terms by position and validates block count and type before any write; mismatches return an error and nothing is written.
+
 ## Configuration
 
 - `odoo-instances.json` is the read-only bootstrap file. On first startup, its HTTPS URL, optional database, and resolved API key are copied to `mcp-state/odoo-instances.json` outside the repository. The private store is written with mode `0600`; subsequent changes use the admin page.

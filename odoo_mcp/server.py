@@ -14,6 +14,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from .admin import create_admin_routes
 from .auth import BearerAuthMiddleware, UserDirectory, require_tool_access
 from .config import InstanceDirectory, OdooInstance, load_instances
+from .marked_text import MarkedTextError, convert_marked_text, pair_translation_terms
 from .odoo_api import OdooApiError, OdooJson2
 
 MAX_LIMIT = 100
@@ -33,6 +34,7 @@ BLOG_POST_FIELDS = [
     "website_meta_title", "website_meta_description", "website_meta_keywords", "website_meta_og_img",
     "seo_name", "is_published", "post_date", "published_date", "website_url",
 ]
+CONTENT_FORMATS = frozenset({"html", "marked_text"})
 BLOG_POST_SEARCH_FIELDS = [
     "id", "name", "subtitle", "blog_id", "tag_ids", "author_id", "website_id",
     "is_published", "post_date", "published_date", "website_url",
@@ -117,6 +119,20 @@ def _translation_terms_by_source(result: Any, source_lang: str, lang: str) -> di
         values.get(source_lang, source): values.get(lang, source)
         for source, values in grouped.items()
     }
+
+
+def _blog_content(content: str | None, content_format: str,
+                  name: str | None) -> tuple[str | None, str | None]:
+    """Return (content HTML, name) after applying the requested content format."""
+    if content_format not in CONTENT_FORMATS:
+        raise ValueError('content_format must be "html" or "marked_text"')
+    if content_format == "html" or content is None:
+        return content, name
+    try:
+        document = convert_marked_text(content)
+    except MarkedTextError as exc:
+        raise ValueError(str(exc)) from exc
+    return document.html, name if name is not None else document.title
 
 
 def _image_info(image_base64: str, filename: str) -> tuple[bytes, str]:
@@ -616,20 +632,39 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def set_blog_post_translation(
-        instance: str, website_id: int, post_id: int, lang: str, name: str, subtitle: str,
-        content_terms: dict[str, str], website_meta_title: str, website_meta_description: str,
-        website_meta_keywords: str, ctx: Context, seo_name: str | None = None,
+        instance: str, website_id: int, post_id: int, lang: str, subtitle: str,
+        website_meta_title: str, website_meta_description: str, website_meta_keywords: str,
+        ctx: Context, name: str | None = None, content_terms: dict[str, str] | None = None,
+        content_marked_text: str | None = None, seo_name: str | None = None,
     ) -> dict[str, bool]:
-        """Write translatable fields and HTML content terms in one active website language."""
+        """Write translatable fields and HTML content terms in one active website language.
+
+        Pass either content_terms (source term -> translation) or content_marked_text:
+        the translated marked text with the same blocks as the primary-language content,
+        paired with its terms by position. An H1 line in it is the translated name unless
+        name is given.
+        """
         require_tool_access("set_blog_post_translation", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
         _validate_lang_code(lang)
-        if not isinstance(content_terms, dict) or any(
+        if (content_terms is None) == (content_marked_text is None):
+            raise ValueError("Provide exactly one of content_terms or content_marked_text")
+        translated_document = None
+        if content_marked_text is not None:
+            try:
+                translated_document = convert_marked_text(content_marked_text)
+            except MarkedTextError as exc:
+                raise ValueError(str(exc)) from exc
+            if name is None:
+                name = translated_document.title
+        elif not isinstance(content_terms, dict) or any(
             not isinstance(term, str) or not isinstance(translation, str)
             for term, translation in content_terms.items()
         ):
             raise ValueError("content_terms must be an object mapping source terms to translations")
+        if name is None:
+            raise ValueError("name is required unless content_marked_text has an H1 line")
         api = target(instance)
         try:
             post = await _blog_post_on_website(api, post_id, website_id, ["id"])
@@ -640,6 +675,15 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                 "blog.post", post["id"], "content", [source_lang, lang],
             )
             current_terms = _translation_terms_by_source(current_terms_result, source_lang, lang)
+            if translated_document is not None:
+                source_post = await api.read("blog.post", post["id"], ["content"],
+                                             context={"lang": source_lang})
+                try:
+                    content_terms = pair_translation_terms(
+                        source_post.get("content") or "", list(current_terms), translated_document,
+                    )
+                except MarkedTextError as exc:
+                    raise ValueError(str(exc)) from exc
             unknown_terms = set(content_terms) - set(current_terms)
             if unknown_terms:
                 raise ValueError("content_terms contains source terms not present in this blog post")
@@ -705,19 +749,26 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
-    async def create_blog_post(instance: str, website_id: int, blog_id: int, name: str,
-                               ctx: Context, subtitle: str | None = None, content: str | None = None,
+    async def create_blog_post(instance: str, website_id: int, blog_id: int,
+                               ctx: Context, name: str | None = None,
+                               subtitle: str | None = None, content: str | None = None,
+                               content_format: str = "html",
                                tag_ids: list[int] | None = None, author_id: int | None = None,
                                website_meta_title: str | None = None,
                                website_meta_description: str | None = None,
                                website_meta_keywords: str | None = None,
                                website_meta_og_img: str | None = None,
                                seo_name: str | None = None) -> dict[str, int]:
-        """Create an unpublished blog post using only the documented content and SEO fields."""
+        """Create an unpublished blog post using only the documented content and SEO fields.
+
+        content_format "html" (default) stores content as given; "marked_text" converts
+        the generator's marked text to HTML, and its H1 line is the name unless name is given.
+        """
         require_tool_access("create_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
         blog_id = _positive_id(blog_id, "blog_id")
-        if not name.strip():
+        content, name = _blog_content(content, content_format, name)
+        if name is None or not name.strip():
             raise ValueError("name must not be empty")
         values: dict[str, Any] = {"name": name.strip(), "blog_id": blog_id, "is_published": False}
         for field, value in {
@@ -742,17 +793,23 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def update_blog_post(instance: str, website_id: int, post_id: int, ctx: Context,
                                name: str | None = None, subtitle: str | None = None,
-                               content: str | None = None, blog_id: int | None = None,
+                               content: str | None = None, content_format: str = "html",
+                               blog_id: int | None = None,
                                tag_ids: list[int] | None = None, author_id: int | None = None,
                                website_meta_title: str | None = None,
                                website_meta_description: str | None = None,
                                website_meta_keywords: str | None = None,
                                website_meta_og_img: str | None = None,
                                seo_name: str | None = None) -> dict[str, bool]:
-        """Edit allowlisted blog content and SEO fields; publication cannot be changed here."""
+        """Edit allowlisted blog content and SEO fields; publication cannot be changed here.
+
+        content_format "html" (default) stores content as given; "marked_text" converts
+        the generator's marked text to HTML, and its H1 line is the name unless name is given.
+        """
         require_tool_access("update_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
+        content, name = _blog_content(content, content_format, name)
         values: dict[str, Any] = {}
         if name is not None:
             if not name.strip():

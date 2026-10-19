@@ -20,6 +20,7 @@ This file tracks engineering scope and decisions. It is not a compliance stateme
 - Configurable named Odoo instances; a client names the target on each call.
 - Project, task, website-page, and blog tools with input and field validation.
 - Blog translations use active website languages. HTML content uses Odoo's term-level translation APIs so target-language changes preserve the primary content; public image covers are restricted to PNG, JPEG, or WebP up to 5 MB.
+- Blog create/update and translation accept the content generator's marked text; `odoo_mcp/marked_text.py` converts it to plain HTML with a fixed rule and pairs translated blocks with Odoo terms by position (Odoo tasks 162 and 164).
 - `schedule_blog_post` is available to `blog_scheduler`; it writes an explicit future `published_date` and sets `is_published=True`. Odoo sends its new-post notification to blog followers immediately when scheduling.
 - Bearer-token users, role-to-tool access control, token rotation/revocation, and a local admin page.
 - Add, edit, credential-test, deactivate, and reactivate Odoo connections from the local admin page; create/update re-test credentials server-side before persisting, and keys persist outside the source tree.

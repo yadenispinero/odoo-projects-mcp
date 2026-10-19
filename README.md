@@ -27,11 +27,30 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. `create_blog_post` and `update_blog_post` write in the Odoo connection user's language, which must be the website's primary language. To translate a post, create it in the primary language, call `get_blog_post_translation_terms`, then send the returned term map as `content_terms` to `set_blog_post_translation`; this updates HTML terms without replacing the primary content. Editors can attach public cover images; schedulers can set a future publication time. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
+- `create_blog_post` and `update_blog_post` accept `content_format`: `html` (default, content stored as given) or `marked_text`. `set_blog_post_translation` accepts `content_marked_text` as an alternative to `content_terms`. See [Marked text format](#marked-text-format).
 - Until its scheduled date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it.
 - Scheduling also sends Odoo's new-post notification to blog followers immediately.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
 - Manage Odoo connections, users, roles, token rotation, and revocation in a local admin page.
 - Connect to Odoo 19+ through JSON-2 or Odoo 18 through XML-RPC over HTTPS.
+
+
+## Marked text format
+
+The content generator saves long-form posts to a Google Doc as marked text, which a person reviews before a client publishes it through this server. The conversion to HTML is a fixed rule implemented once, in `odoo_mcp/marked_text.py`:
+
+| Marked text | HTML |
+|---|---|
+| `H1: Title` (at most one) | Post `name` when `name` is not passed; if `name` is passed, it wins and the H1 line is dropped |
+| `H2: ` … `H6: ` | `<h2>` … `<h6>` |
+| Lines starting with `• `, `- ` or `* ` | `<ul><li>` (blank lines between items keep one list) |
+| Lines starting with `1. `, `2. ` … | `<ol><li>` |
+| Other lines | `<p>` per block separated by blank lines; single line breaks become spaces |
+| Bare `http://` or `https://` URLs | `<a href="…">…</a>` |
+
+Before converting, trailing spaces, repeated blank lines, and the Google Docs escapes `\_ \# \* \[ \]` are cleaned, and `&`, `<` and `>` are escaped. The output has no classes or styles, and no content is added or removed: hashtags, calls to action, and similar decisions belong to the generator or the reviewer.
+
+For a translation, pass the translated marked text with the same structure as the primary-language text as `content_marked_text`. Its blocks are paired by position with the post's Odoo translation terms. If the number or type of blocks differs, or the post contains terms outside its text blocks, the call fails without writing anything; use `content_terms` for such posts. A translated H1 line becomes that language's `name` unless `name` is passed.
 
 ## Security model and current limits
 

@@ -601,3 +601,146 @@ async def test_schedule_blog_post_rejects_published_past_post(monkeypatch):
     finally:
         current_mcp_user.reset(reset)
 
+
+
+class _CreateOdoo:
+    captured: dict = {}
+
+    def __init__(self, instance): self.instance = instance
+    async def read(self, model, record_id, fields): return {"id": 20, "website_id": [10, "Main"]}
+    async def create(self, model, values):
+        _CreateOdoo.captured = values
+        return 56
+    async def close(self): pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name, expected_name", [(None, "From H1"), ("Given name", "Given name")])
+async def test_create_blog_post_converts_marked_text(monkeypatch, name, expected_name):
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", _CreateOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["create_blog_post"](
+            instance="demo", website_id=10, blog_id=20, name=name, ctx=None,
+            content="H1: From H1\n\nH2: Part\n\n• one  \n\n• two", content_format="marked_text",
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {"post_id": 56}
+    assert _CreateOdoo.captured["name"] == expected_name
+    assert _CreateOdoo.captured["content"] == "<h2>Part</h2>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>"
+
+
+@pytest.mark.asyncio
+async def test_create_blog_post_requires_name_or_h1_and_known_format(monkeypatch):
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", _CreateOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(ValueError, match="name must not be empty"):
+            await tools["create_blog_post"](instance="demo", website_id=10, blog_id=20, ctx=None,
+                                            content="Body only", content_format="marked_text")
+        with pytest.raises(ValueError, match="content_format"):
+            await tools["create_blog_post"](instance="demo", website_id=10, blog_id=20, name="x",
+                                            ctx=None, content="x", content_format="markdown")
+    finally:
+        current_mcp_user.reset(reset)
+
+
+@pytest.mark.asyncio
+async def test_update_blog_post_converts_marked_text_and_keeps_html_default(monkeypatch):
+    writes = []
+
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def search_read(self, model, domain, fields, limit, order="id desc"): return [{"id": 55}]
+        async def write(self, model, record_id, values, context=None):
+            writes.append(values)
+            return True
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        await tools["update_blog_post"](instance="demo", website_id=10, post_id=55, ctx=None,
+                                        content="H1: New title\n\nText & more", content_format="marked_text")
+        await tools["update_blog_post"](instance="demo", website_id=10, post_id=55, ctx=None,
+                                        content="H1: kept as given")
+    finally:
+        current_mcp_user.reset(reset)
+    assert writes == [
+        {"name": "New title", "content": "<p>Text &amp; more</p>"},
+        {"content": "H1: kept as given"},
+    ]
+
+
+def _translation_odoo(captured):
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post": return [{"id": 55}]
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": "es_ES"}]
+        async def read(self, model, record_id, fields, context=None):
+            if model == "blog.post":
+                assert fields == ["content"] and context == {"lang": "en_US"}
+                return {"content": "<h2>Section</h2>\n<ul>\n<li>first</li>\n<li>second</li>\n</ul>"}
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+        async def get_field_translations(self, *args, **kwargs):
+            return ([
+                {"lang": "en_US", "source": term, "value": ""} for term in ("Section", "first", "second")
+            ], {})
+        async def update_field_translations(self, model, record_id, field_name, translations, source_lang):
+            captured["terms"] = translations
+            return True
+        async def write(self, model, record_id, values, context=None):
+            captured["values"] = values
+            return True
+        async def close(self): pass
+    return FakeOdoo
+
+
+TRANSLATION_ARGS = dict(
+    instance="demo", website_id=10, post_id=55, lang="es_ES", subtitle="s",
+    website_meta_title="t", website_meta_description="d", website_meta_keywords="k", ctx=None,
+)
+
+
+@pytest.mark.asyncio
+async def test_set_blog_post_translation_pairs_marked_text_terms(monkeypatch):
+    captured = {}
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", _translation_odoo(captured))
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["set_blog_post_translation"](
+            **TRANSLATION_ARGS, content_marked_text="H1: Título\n\nH2: Sección\n\n• primero\n\n• segundo",
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {"updated": True}
+    assert captured["terms"] == {"es_ES": {"Section": "Sección", "first": "primero", "second": "segundo"}}
+    assert captured["values"]["name"] == "Título"
+
+
+@pytest.mark.asyncio
+async def test_set_blog_post_translation_rejects_mismatched_marked_text_without_writing(monkeypatch):
+    captured = {}
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", _translation_odoo(captured))
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(ValueError, match="same structure"):
+            await tools["set_blog_post_translation"](
+                **TRANSLATION_ARGS, name="Título", content_marked_text="H2: Sección\n\nprimero\n\nsegundo",
+            )
+        with pytest.raises(ValueError, match="exactly one"):
+            await tools["set_blog_post_translation"](
+                **TRANSLATION_ARGS, name="x", content_terms={}, content_marked_text="x",
+            )
+        with pytest.raises(ValueError, match="name is required"):
+            await tools["set_blog_post_translation"](**TRANSLATION_ARGS, content_terms={})
+    finally:
+        current_mcp_user.reset(reset)
+    assert captured == {}

@@ -148,6 +148,12 @@ async def test_create_rejects_unexpected_ids_response(response_value):
     ("write", {"ids": [9], "vals": {"name": "Y"}}, ([[9], {"name": "Y"}], {})),
     ("write", {"ids": [9], "vals": {"name": "Y"}, "context": {"lang": "es_ES"}},
      ([[9], {"name": "Y"}], {"context": {"lang": "es_ES"}})),
+    ("get_field_translations", {"ids": [9], "field_name": "content", "langs": ["en_US", "es_419"]},
+     ([[9], "content", ["en_US", "es_419"]], {})),
+    ("update_field_translations", {"ids": [9], "field_name": "content",
+                                    "translations": {"es_419": {"Hello": "Hola"}},
+                                    "source_lang": "en_US"},
+     ([[9], "content", {"es_419": {"Hello": "Hola"}}], {"source_lang": "en_US"})),
     ("unlink", {"ids": [9]}, ([[9]], {})),
 ])
 def test_xmlrpc_operation_arguments(method, payload, expected):

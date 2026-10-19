@@ -30,6 +30,7 @@ def test_blog_roles_are_separate_from_page_roles():
     assert "update_page_content" not in editor
     assert "create_blog_post" not in ROLE_TOOLS["website_editor"]
     assert "set_blog_post_translation" in editor
+    assert "get_blog_post_translation_terms" in editor
     assert "set_blog_post_cover" in editor
     assert "schedule_blog_post" in ROLE_TOOLS["blog_scheduler"]
 
@@ -303,9 +304,74 @@ async def test_get_blog_post_rejects_uninstalled_language_with_clear_error(monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+async def test_get_blog_post_translation_terms_returns_primary_terms_and_current_translation(monkeypatch, api_type):
+    captured = {}
+
+    class FakeOdoo:
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post": return [{"id": 55}]
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": "es_419"}]
+        async def read(self, model, record_id, fields, context=None):
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+        async def get_field_translations(self, model, record_id, field_name, langs):
+            captured["request"] = (model, record_id, field_name, langs)
+            return ([
+                {"lang": "en_US", "source": "Hello", "value": ""},
+                {"lang": "es_419", "source": "Hello", "value": "Hola"},
+            ], {"translation_type": "text"})
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test", api_type=api_type)}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["get_blog_post_translation_terms"](
+            instance="demo", website_id=10, post_id=55, lang="es_419", ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {
+        "source_lang": "en_US", "lang": "es_419", "content_terms": {"Hello": "Hola"},
+    }
+    assert captured["request"] == ("blog.post", 55, "content", ["en_US", "es_419"])
+
+
+@pytest.mark.asyncio
+async def test_set_blog_post_translation_rejects_unknown_content_terms(monkeypatch):
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post": return [{"id": 55}]
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": "es_419"}]
+        async def read(self, model, record_id, fields, context=None):
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+        async def get_field_translations(self, *args, **kwargs):
+            return ([{"lang": "en_US", "source": "Hello", "value": ""}], {})
+        async def update_field_translations(self, *args, **kwargs): raise AssertionError("must reject before update")
+        async def write(self, *args, **kwargs): raise AssertionError("must reject before write")
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(ValueError, match="source terms not present"):
+            await tools["set_blog_post_translation"](
+                instance="demo", website_id=10, post_id=55, lang="es_419", name="x", subtitle="x",
+                content_terms={"Not in the post": "No es parte"}, website_meta_title="x",
+                website_meta_description="x", website_meta_keywords="x", ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
 @pytest.mark.parametrize("lang", ["es_ES", "es_419", "sr@latin"])
 async def test_set_blog_post_translation_uses_active_website_language_and_context(monkeypatch, api_type, lang):
     captured = {}
+    post_content = {"en_US": "<p>Hello</p>", lang: "<p>Hola</p>"}
 
     class FakeOdoo:
         def __init__(self, instance):
@@ -316,13 +382,27 @@ async def test_set_blog_post_translation_uses_active_website_language_and_contex
                 assert domain == [["id", "=", 55], "|", ["website_id", "=", 10], ["website_id", "=", False]]
                 return [{"id": 55}]
             assert model == "res.lang"
-            return [{"id": 2, "code": lang}, {"id": 3, "code": "de_DE"}]
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": lang}, {"id": 4, "code": "de_DE"}]
 
         async def read(self, model, record_id, fields, context=None):
-            assert (model, record_id, fields) == ("website", 10, ["language_ids"])
-            return {"language_ids": [2]}
+            assert (model, record_id, fields) == ("website", 10, ["language_ids", "default_lang_id"])
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+
+        async def get_field_translations(self, model, record_id, field_name, langs):
+            assert (model, record_id, field_name, langs) == ("blog.post", 55, "content", ["en_US", lang])
+            return ([
+                {"lang": "en_US", "source": "<p>Hello</p>", "value": ""},
+                {"lang": lang, "source": "<p>Hello</p>", "value": "<p>Hola</p>"},
+            ], {"translation_type": "text"})
+
+        async def update_field_translations(self, model, record_id, field_name, translations, source_lang):
+            assert (model, record_id, field_name, source_lang) == ("blog.post", 55, "content", "en_US")
+            captured["content_terms"] = translations
+            post_content.update(translations[lang])
+            return True
 
         async def write(self, model, record_id, values, context=None):
+            assert "content" not in values
             captured.update(model=model, record_id=record_id, values=values, context=context)
             return True
 
@@ -335,14 +415,16 @@ async def test_set_blog_post_translation_uses_active_website_language_and_contex
     try:
         result = await tools["set_blog_post_translation"](
             instance="demo", website_id=10, post_id=55, lang=lang, name="Título",
-            subtitle="Subtítulo", content="<p>Texto</p>", website_meta_title="SEO",
+            subtitle="Subtítulo", content_terms={"<p>Hello</p>": "<p>Hola</p>"}, website_meta_title="SEO",
             website_meta_description="Descripción", website_meta_keywords="palabras", seo_name="titulo", ctx=None,
         )
     finally:
         current_mcp_user.reset(reset)
     assert result == {"updated": True}
     assert captured["context"] == {"lang": lang}
-    assert captured["values"]["content"] == "<p>Texto</p>"
+    assert captured["content_terms"] == {lang: {"<p>Hello</p>": "<p>Hola</p>"}}
+    assert post_content["en_US"] == "<p>Hello</p>"
+    assert post_content[lang] == "<p>Hola</p>"
     assert "is_published" not in captured["values"]
 
 
@@ -351,9 +433,11 @@ async def test_set_blog_post_translation_rejects_language_not_enabled_for_websit
     class FakeOdoo:
         def __init__(self, instance): pass
         async def search_read(self, model, domain, fields, limit, order="id desc"):
-            return [{"id": 55}] if model == "blog.post" else [{"id": 2, "code": "es_ES"}]
-        async def read(self, model, record_id, fields, context=None): return {"language_ids": []}
+            return [{"id": 55}] if model == "blog.post" else [{"id": 2, "code": "en_US"}, {"id": 3, "code": "es_ES"}]
+        async def read(self, model, record_id, fields, context=None):
+            return {"language_ids": [2], "default_lang_id": [2, "English"]}
         async def write(self, *args, **kwargs): raise AssertionError("must reject before write")
+        async def get_field_translations(self, *args, **kwargs): raise AssertionError("must reject before terms read")
         async def close(self): pass
 
     monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
@@ -363,7 +447,7 @@ async def test_set_blog_post_translation_rejects_language_not_enabled_for_websit
         with pytest.raises(ValueError, match="not active"):
             await tools["set_blog_post_translation"](
                 instance="demo", website_id=10, post_id=55, lang="es_ES", name="x", subtitle="x",
-                content="x", website_meta_title="x", website_meta_description="x",
+                content_terms={}, website_meta_title="x", website_meta_description="x",
                 website_meta_keywords="x", ctx=None,
             )
     finally:

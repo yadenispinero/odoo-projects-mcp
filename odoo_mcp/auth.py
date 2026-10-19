@@ -33,7 +33,7 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     "blog_editor": frozenset({
         "list_websites", "search_blogs", "search_blog_posts", "get_blog_post",
         "create_blog_post", "update_blog_post",
-        "set_blog_post_translation", "set_blog_post_cover",
+        "get_blog_post_translation_terms", "set_blog_post_translation", "set_blog_post_cover",
     }),
     "blog_publisher": frozenset({
         "list_websites", "search_blogs", "search_blog_posts", "get_blog_post",

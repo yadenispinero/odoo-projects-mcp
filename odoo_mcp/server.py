@@ -81,6 +81,44 @@ async def _blog_post_on_website(api: OdooJson2, post_id: int, website_id: int,
     return posts[0]
 
 
+async def _blog_website_languages(api: OdooJson2, website_id: int) -> tuple[str, set[str]]:
+    website = await api.read("website", website_id, ["language_ids", "default_lang_id"])
+    language_ids = {
+        item if isinstance(item, int) and not isinstance(item, bool)
+        else item[0] for item in website.get("language_ids", [])
+        if (isinstance(item, int) and not isinstance(item, bool))
+        or (isinstance(item, (list, tuple)) and item
+            and isinstance(item[0], int) and not isinstance(item[0], bool))
+    }
+    languages = await api.search_read("res.lang", [["active", "=", True]], ["id", "code"], 1000)
+    active_website_codes = {
+        item.get("code") for item in languages if item.get("id") in language_ids and item.get("code")
+    }
+    default_lang_id = _relation_id(website.get("default_lang_id"))
+    default_lang = next((item.get("code") for item in languages if item.get("id") == default_lang_id), None)
+    if not default_lang or default_lang not in active_website_codes:
+        raise ValueError(f"Website {website_id} has no active primary language")
+    return default_lang, active_website_codes
+
+
+def _translation_terms_by_source(result: Any, source_lang: str, lang: str) -> dict[str, str]:
+    if not isinstance(result, (list, tuple)) or not result or not isinstance(result[0], list):
+        raise OdooApiError("Odoo returned an unexpected get_field_translations response")
+    grouped: dict[str, dict[str, str]] = {}
+    for row in result[0]:
+        if not isinstance(row, dict) or not isinstance(row.get("source"), str):
+            continue
+        source = row["source"]
+        row_lang = row.get("lang")
+        value = row.get("value")
+        if row_lang in (source_lang, lang):
+            grouped.setdefault(source, {})[row_lang] = value if isinstance(value, str) and value else source
+    return {
+        values.get(source_lang, source): values.get(lang, source)
+        for source, values in grouped.items()
+    }
+
+
 def _image_info(image_base64: str, filename: str) -> tuple[bytes, str]:
     if not isinstance(filename, str) or not filename.strip() or len(filename) > 255:
         raise ValueError("filename must be a non-empty filename of at most 255 characters")
@@ -551,32 +589,66 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
-    async def set_blog_post_translation(
-        instance: str, website_id: int, post_id: int, lang: str, name: str, subtitle: str,
-        content: str, website_meta_title: str, website_meta_description: str,
-        website_meta_keywords: str, ctx: Context, seo_name: str | None = None,
-    ) -> dict[str, bool]:
-        """Write a blog post translation in one active language for the selected website."""
-        require_tool_access("set_blog_post_translation", instance)
+    async def get_blog_post_translation_terms(
+        instance: str, website_id: int, post_id: int, lang: str, ctx: Context,
+    ) -> dict[str, Any]:
+        """Get HTML content terms in the website's primary language and their translation."""
+        require_tool_access("get_blog_post_translation_terms", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
         _validate_lang_code(lang)
         api = target(instance)
         try:
-            post = await _blog_post_on_website(api, post_id, website_id, ["id"])
-            website = await api.read("website", website_id, ["language_ids"])
-            language_ids = [
-                item if isinstance(item, int) and not isinstance(item, bool)
-                else item[0] for item in website.get("language_ids", [])
-                if (isinstance(item, int) and not isinstance(item, bool))
-                or (isinstance(item, (list, tuple)) and item and isinstance(item[0], int))
-            ]
-            languages = await api.search_read("res.lang", [["active", "=", True]], ["id", "code"], 1000)
-            active_codes = {item.get("code") for item in languages if item.get("id") in language_ids}
+            await _blog_post_on_website(api, post_id, website_id, ["id"])
+            source_lang, active_codes = await _blog_website_languages(api, website_id)
             if lang not in active_codes:
                 raise ValueError(f"Language {lang} is not active on website {website_id}")
+            result = await api.get_field_translations(
+                "blog.post", post_id, "content", [source_lang, lang],
+            )
+            return {
+                "source_lang": source_lang,
+                "lang": lang,
+                "content_terms": _translation_terms_by_source(result, source_lang, lang),
+            }
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_blog_post_translation(
+        instance: str, website_id: int, post_id: int, lang: str, name: str, subtitle: str,
+        content_terms: dict[str, str], website_meta_title: str, website_meta_description: str,
+        website_meta_keywords: str, ctx: Context, seo_name: str | None = None,
+    ) -> dict[str, bool]:
+        """Write translatable fields and HTML content terms in one active website language."""
+        require_tool_access("set_blog_post_translation", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        _validate_lang_code(lang)
+        if not isinstance(content_terms, dict) or any(
+            not isinstance(term, str) or not isinstance(translation, str)
+            for term, translation in content_terms.items()
+        ):
+            raise ValueError("content_terms must be an object mapping source terms to translations")
+        api = target(instance)
+        try:
+            post = await _blog_post_on_website(api, post_id, website_id, ["id"])
+            source_lang, active_codes = await _blog_website_languages(api, website_id)
+            if lang not in active_codes:
+                raise ValueError(f"Language {lang} is not active on website {website_id}")
+            current_terms_result = await api.get_field_translations(
+                "blog.post", post["id"], "content", [source_lang, lang],
+            )
+            current_terms = _translation_terms_by_source(current_terms_result, source_lang, lang)
+            unknown_terms = set(content_terms) - set(current_terms)
+            if unknown_terms:
+                raise ValueError("content_terms contains source terms not present in this blog post")
+            if content_terms:
+                await api.update_field_translations(
+                    "blog.post", post["id"], "content", {lang: content_terms}, source_lang,
+                )
             values: dict[str, Any] = {
-                "name": name, "subtitle": subtitle, "content": content,
+                "name": name, "subtitle": subtitle,
                 "website_meta_title": website_meta_title,
                 "website_meta_description": website_meta_description,
                 "website_meta_keywords": website_meta_keywords,

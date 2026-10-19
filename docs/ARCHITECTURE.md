@@ -40,6 +40,8 @@ Tools are specific to projects, tasks, website pages, and blog posts. Each tool 
 
 The Odoo connector reads the connection user's context with `res.users.context_get` on the first model call and uses its `lang` as the default context for all calls in both protocols; explicit `context.lang` takes precedence. JSON-2 does not automatically use the user's language when the `context` argument is omitted: its API context is optional and defaults to an empty context, so it needs this same explicit language handling as XML-RPC. See [Odoo's JSON-2 API reference](https://www.odoo.com/documentation/19.0/developer/reference/external_api.html).
 
+HTML blog content uses Odoo's term-level translation methods. Read the primary-language terms with `get_blog_post_translation_terms`, then pass only existing source terms and their translations as `content_terms` to `set_blog_post_translation`; other translatable fields are still written with the explicit language context.
+
 ## Configuration
 
 - `odoo-instances.json` is the read-only bootstrap file. On first startup, its HTTPS URL, optional database, and resolved API key are copied to `mcp-state/odoo-instances.json` outside the repository. The private store is written with mode `0600`; subsequent changes use the admin page.

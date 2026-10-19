@@ -148,6 +148,12 @@ class OdooJson2:
         if method == "write":
             kwargs = {"context": payload["context"]} if "context" in payload else {}
             return [payload["ids"], payload["vals"]], kwargs
+        if method == "get_field_translations":
+            kwargs = {"context": payload["context"]} if "context" in payload else {}
+            return [payload["ids"], payload["field_name"], payload.get("langs")], kwargs
+        if method == "update_field_translations":
+            kwargs = {key: payload[key] for key in ("source_lang", "context") if key in payload}
+            return [payload["ids"], payload["field_name"], payload["translations"]], kwargs
         if method == "unlink":
             kwargs = {"context": payload["context"]} if "context" in payload else {}
             return [payload["ids"]], kwargs
@@ -201,4 +207,23 @@ class OdooJson2:
         result = await self.call(model, "unlink", {"ids": [record_id]})
         if result is not True:
             raise OdooApiError(f"Unexpected response from {model}.unlink")
+        return result
+
+    async def get_field_translations(
+        self, model: str, record_id: int, field_name: str, langs: list[str],
+    ) -> Any:
+        return await self.call(model, "get_field_translations", {
+            "ids": [record_id], "field_name": field_name, "langs": langs,
+        })
+
+    async def update_field_translations(
+        self, model: str, record_id: int, field_name: str, translations: dict[str, Any],
+        source_lang: str,
+    ) -> bool:
+        result = await self.call(model, "update_field_translations", {
+            "ids": [record_id], "field_name": field_name,
+            "translations": translations, "source_lang": source_lang,
+        })
+        if result is not True:
+            raise OdooApiError(f"Unexpected response from {model}.update_field_translations")
         return result

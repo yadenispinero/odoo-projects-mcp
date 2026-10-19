@@ -135,6 +135,19 @@ def _blog_content(content: str | None, content_format: str,
     return document.html, name if name is not None else document.title
 
 
+async def _primary_lang_context(api: OdooJson2, website_id: int, lang: str | None) -> dict[str, str] | None:
+    """Return a write context for lang, which must be the website's primary language."""
+    if lang is None:
+        return None
+    source_lang, _ = await _blog_website_languages(api, website_id)
+    if lang != source_lang:
+        raise ValueError(
+            f"Website {website_id} primary language is {source_lang}, not {lang}; write the post in "
+            f"{source_lang} and add {lang} with set_blog_post_translation"
+        )
+    return {"lang": source_lang}
+
+
 def _image_info(image_base64: str, filename: str) -> tuple[bytes, str]:
     if not isinstance(filename, str) or not filename.strip() or len(filename) > 255:
         raise ValueError("filename must be a non-empty filename of at most 255 characters")
@@ -758,11 +771,13 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                                website_meta_description: str | None = None,
                                website_meta_keywords: str | None = None,
                                website_meta_og_img: str | None = None,
-                               seo_name: str | None = None) -> dict[str, int]:
+                               seo_name: str | None = None, lang: str | None = None) -> dict[str, int]:
         """Create an unpublished blog post using only the documented content and SEO fields.
 
         content_format "html" (default) stores content as given; "marked_text" converts
         the generator's marked text to HTML, and its H1 line is the name unless name is given.
+        lang, when given, must be the website's primary language; the post is then written
+        in that language regardless of the Odoo user's language.
         """
         require_tool_access("create_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
@@ -783,10 +798,15 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             values["tag_ids"] = [[6, 0, [_positive_id(tag_id, "tag_id") for tag_id in tag_ids]]]
         if author_id is not None:
             values["author_id"] = _positive_id(author_id, "author_id")
+        if lang is not None:
+            _validate_lang_code(lang)
         api = target(instance)
         try:
             await _blog_for_website(api, blog_id, website_id)
-            return {"post_id": await api.create("blog.post", values)}
+            context = await _primary_lang_context(api, website_id, lang)
+            if context is None:
+                return {"post_id": await api.create("blog.post", values)}
+            return {"post_id": await api.create("blog.post", values, context=context)}
         finally:
             await api.close()
 
@@ -800,11 +820,13 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                                website_meta_description: str | None = None,
                                website_meta_keywords: str | None = None,
                                website_meta_og_img: str | None = None,
-                               seo_name: str | None = None) -> dict[str, bool]:
+                               seo_name: str | None = None, lang: str | None = None) -> dict[str, bool]:
         """Edit allowlisted blog content and SEO fields; publication cannot be changed here.
 
         content_format "html" (default) stores content as given; "marked_text" converts
         the generator's marked text to HTML, and its H1 line is the name unless name is given.
+        lang, when given, must be the website's primary language; fields are then written
+        in that language regardless of the Odoo user's language.
         """
         require_tool_access("update_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
@@ -832,12 +854,17 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             values["author_id"] = _positive_id(author_id, "author_id")
         if not values:
             raise ValueError("Provide at least one blog post field to update")
+        if lang is not None:
+            _validate_lang_code(lang)
         api = target(instance)
         try:
             await _blog_post_on_website(api, post_id, website_id, ["id"])
             if blog_id is not None:
                 await _blog_for_website(api, blog_id, website_id)
-            return {"updated": await api.write("blog.post", post_id, values)}
+            context = await _primary_lang_context(api, website_id, lang)
+            if context is None:
+                return {"updated": await api.write("blog.post", post_id, values)}
+            return {"updated": await api.write("blog.post", post_id, values, context=context)}
         finally:
             await api.close()
 

@@ -744,3 +744,47 @@ async def test_set_blog_post_translation_rejects_mismatched_marked_text_without_
     finally:
         current_mcp_user.reset(reset)
     assert captured == {}
+
+
+def _primary_lang_odoo(captured):
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def read(self, model, record_id, fields, context=None):
+            if model == "blog.blog": return {"id": 20, "website_id": [10, "Main"]}
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post": return [{"id": 55}]
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": "es_ES"}]
+        async def create(self, model, values, context=None):
+            captured["create"] = (values, context)
+            return 57
+        async def write(self, model, record_id, values, context=None):
+            captured["write"] = (values, context)
+            return True
+        async def close(self): pass
+    return FakeOdoo
+
+
+@pytest.mark.asyncio
+async def test_blog_post_lang_must_be_website_primary_language(monkeypatch):
+    captured = {}
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", _primary_lang_odoo(captured))
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        assert await tools["create_blog_post"](instance="demo", website_id=10, blog_id=20, name="Post",
+                                               ctx=None, lang="en_US") == {"post_id": 57}
+        assert await tools["update_blog_post"](instance="demo", website_id=10, post_id=55, ctx=None,
+                                               name="Post", lang="en_US") == {"updated": True}
+        assert captured["create"][1] == {"lang": "en_US"}
+        assert captured["write"][1] == {"lang": "en_US"}
+        captured.clear()
+        with pytest.raises(ValueError, match="primary language is en_US, not es_ES"):
+            await tools["create_blog_post"](instance="demo", website_id=10, blog_id=20, name="Post",
+                                            ctx=None, lang="es_ES")
+        with pytest.raises(ValueError, match="primary language is en_US, not es_ES"):
+            await tools["update_blog_post"](instance="demo", website_id=10, post_id=55, ctx=None,
+                                            name="Post", lang="es_ES")
+    finally:
+        current_mcp_user.reset(reset)
+    assert captured == {}

@@ -183,8 +183,12 @@ class OdooJson2:
             raise OdooApiError(f"No {model} record found with id {record_id}")
         return result[0]
 
-    async def create(self, model: str, values: dict[str, Any]) -> int:
-        result = await self.call(model, "create", {"vals_list": [values]})
+    async def create(self, model: str, values: dict[str, Any],
+                     context: dict[str, Any] | None = None) -> int:
+        payload: dict[str, Any] = {"vals_list": [values]}
+        if context is not None:
+            payload["context"] = context
+        result = await self.call(model, "create", payload)
         # JSON-2 returns one ID per vals_list entry, while XML-RPC create
         # returns the single ID directly.
         if isinstance(result, list) and len(result) == 1:

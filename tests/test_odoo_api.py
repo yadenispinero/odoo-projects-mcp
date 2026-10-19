@@ -137,9 +137,28 @@ async def test_create_rejects_unexpected_ids_response(response_value):
      ([[9]], {"fields": ["name"], "context": {"active_test": False}})),
     ("create", {"vals_list": [{"name": "X"}]}, ([{"name": "X"}], {})),
     ("write", {"ids": [9], "vals": {"name": "Y"}}, ([[9], {"name": "Y"}], {})),
+    ("write", {"ids": [9], "vals": {"name": "Y"}, "context": {"lang": "es_ES"}},
+     ([[9], {"name": "Y"}], {"context": {"lang": "es_ES"}})),
 ])
 def test_xmlrpc_operation_arguments(method, payload, expected):
     assert OdooJson2._xmlrpc_arguments(method, payload) == expected
+
+
+@pytest.mark.asyncio
+async def test_json2_write_preserves_language_context():
+    seen = {}
+
+    def handler(request):
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(200, json=True)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
+    assert await api.write("blog.post", 9, {"name": "Título"}, context={"lang": "es_ES"}) is True
+    assert seen["payload"] == {
+        "ids": [9], "vals": {"name": "Título"}, "context": {"lang": "es_ES"},
+    }
+    await client.aclose()
 
 
 @pytest.mark.asyncio

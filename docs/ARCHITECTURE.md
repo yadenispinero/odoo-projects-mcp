@@ -4,7 +4,7 @@
 
 1. **MCP client:** an AI application or workflow runner sends a named tool request over Streamable HTTP and authenticates with its own bearer token.
 2. **MCP service:** validates the token, maps it to roles, checks tool authorization, validates inputs, and selects an explicitly named Odoo target.
-3. **Odoo connector:** sends a fixed model/method call to the configured JSON-2 endpoint over HTTPS, using a server-side API key.
+3. **Odoo connector:** sends a fixed model/method call to the configured JSON-2 endpoint (Odoo 19+) or XML-RPC endpoint (Odoo 18) over HTTPS, using a server-side API key.
 4. **Odoo:** applies its own access rights and record rules. This is the final data authorization layer.
 5. **Access administration:** a local web page manages users and roles in SQLite and Odoo connections in a private JSON store. It is intended for local administration only.
 
@@ -36,7 +36,7 @@ The service receives and returns Odoo business data. If a client forwards tool r
 
 ## Tool contract
 
-Tools are specific to projects, tasks, website pages, and blog posts. Each tool owns its model, method, fields, input validation, and role requirement. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page and blog publication and unpublication are separate tools with separate permissions. Blog operations require an explicit website ID and scope reads and mutations to that website. Blog posts expose an allowlist of content, author, tag, and SEO fields; creation sets `is_published` to false.
+Tools are specific to projects, tasks, website pages, and blog posts. Each tool owns its model, method, fields, input validation, and role requirement. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page and blog publication and unpublication are separate tools with separate permissions. Blog operations require an explicit website ID and scope reads and mutations to that website. Blog translations write with an explicit `lang` context, and only languages enabled on that website are accepted. Cover uploads are limited to public PNG, JPEG, or WebP attachments up to 5 MB and preserve existing cover properties. The `blog_scheduler` role is registered, but no scheduling operation is exposed until the required anonymous staging checks pass.
 
 ## Configuration
 

@@ -112,7 +112,8 @@ class OdooJson2:
             vals_list = payload.get("vals_list", [])
             return [vals_list[0]], {}
         if method == "write":
-            return [payload["ids"], payload["vals"]], {}
+            kwargs = {"context": payload["context"]} if "context" in payload else {}
+            return [payload["ids"], payload["vals"]], kwargs
         raise OdooApiError(f"Unsupported XML-RPC method {method}")
 
     async def search_read(
@@ -149,8 +150,12 @@ class OdooJson2:
             raise OdooApiError(f"Unexpected response from {model}.create")
         return result
 
-    async def write(self, model: str, record_id: int, values: dict[str, Any]) -> bool:
-        result = await self.call(model, "write", {"ids": [record_id], "vals": values})
+    async def write(self, model: str, record_id: int, values: dict[str, Any],
+                    context: dict[str, Any] | None = None) -> bool:
+        payload: dict[str, Any] = {"ids": [record_id], "vals": values}
+        if context is not None:
+            payload["context"] = context
+        result = await self.call(model, "write", payload)
         if result is not True:
             raise OdooApiError(f"Unexpected response from {model}.write")
         return result

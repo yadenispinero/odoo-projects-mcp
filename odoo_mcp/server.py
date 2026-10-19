@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import os
+import re
 from datetime import date
 from typing import Any
 from urllib.parse import urljoin
@@ -75,6 +79,33 @@ async def _blog_post_on_website(api: OdooJson2, post_id: int, website_id: int,
     if not posts:
         raise OdooApiError(f"No blog post {post_id} found on website {website_id}")
     return posts[0]
+
+
+def _image_info(image_base64: str, filename: str) -> tuple[bytes, str]:
+    if not isinstance(filename, str) or not filename.strip() or len(filename) > 255:
+        raise ValueError("filename must be a non-empty filename of at most 255 characters")
+    if not isinstance(image_base64, str) or len(image_base64) > 7 * 1024 * 1024:
+        raise ValueError("Image must be no larger than 5 MB")
+    try:
+        content = base64.b64decode(image_base64, validate=True)
+    except (TypeError, binascii.Error) as exc:
+        raise ValueError("image_base64 must contain valid base64 data") from exc
+    if not content or len(content) > 5 * 1024 * 1024:
+        raise ValueError("Image must be non-empty and no larger than 5 MB")
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif content.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+    elif len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        mime = "image/webp"
+    else:
+        raise ValueError("Image must be a PNG, JPEG, or WebP file")
+    suffix = os.path.splitext(filename)[1].lower()
+    matching_suffix = {"image/png": {".png"}, "image/jpeg": {".jpg", ".jpeg"},
+                       "image/webp": {".webp"}}
+    if suffix not in matching_suffix[mime]:
+        raise ValueError("filename extension must match the PNG, JPEG, or WebP image data")
+    return content, mime
 
 
 async def _website_url_base(api: OdooJson2, website_id: int) -> str:
@@ -463,7 +494,7 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def get_blog_post(instance: str, website_id: int, post_id: int,
-                            ctx: Context) -> dict[str, Any]:
+                            ctx: Context, lang: str | None = None) -> dict[str, Any]:
         """Read an allowlisted set of fields from one post on the selected website."""
         require_tool_access("get_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
@@ -471,7 +502,79 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         api = target(instance)
         try:
             post = await _blog_post_on_website(api, post_id, website_id, BLOG_POST_FIELDS)
+            if lang is not None:
+                post = await api.read("blog.post", post_id, BLOG_POST_FIELDS, context={"lang": lang})
             return _absolute_blog_post_url(post, await _website_url_base(api, website_id))
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_blog_post_translation(
+        instance: str, website_id: int, post_id: int, lang: str, name: str, subtitle: str,
+        content: str, website_meta_title: str, website_meta_description: str,
+        website_meta_keywords: str, ctx: Context, seo_name: str | None = None,
+    ) -> dict[str, bool]:
+        """Write a blog post translation in one active language for the selected website."""
+        require_tool_access("set_blog_post_translation", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        if not isinstance(lang, str) or not re.fullmatch(r"[a-z]{2,3}_[A-Z]{2,3}", lang):
+            raise ValueError("lang must be a language code such as es_ES or de_DE")
+        api = target(instance)
+        try:
+            post = await _blog_post_on_website(api, post_id, website_id, ["id"])
+            website = await api.read("website", website_id, ["language_ids"])
+            language_ids = [item[0] for item in website.get("language_ids", [])
+                            if isinstance(item, (list, tuple)) and item and isinstance(item[0], int)]
+            languages = await api.search_read("res.lang", [["active", "=", True]], ["id", "code"], 1000)
+            active_codes = {item.get("code") for item in languages if item.get("id") in language_ids}
+            if lang not in active_codes:
+                raise ValueError(f"Language {lang} is not active on website {website_id}")
+            values: dict[str, Any] = {
+                "name": name, "subtitle": subtitle, "content": content,
+                "website_meta_title": website_meta_title,
+                "website_meta_description": website_meta_description,
+                "website_meta_keywords": website_meta_keywords,
+            }
+            if seo_name is not None:
+                values["seo_name"] = seo_name
+            return {"updated": await api.write("blog.post", post["id"], values, context={"lang": lang})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_blog_post_cover(
+        instance: str, website_id: int, post_id: int, image_base64: str, filename: str,
+        ctx: Context, set_og_image: bool = True,
+    ) -> dict[str, str]:
+        """Attach a public PNG, JPEG, or WebP image as a blog post cover."""
+        require_tool_access("set_blog_post_cover", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        content, mime = _image_info(image_base64, filename)
+        api = target(instance)
+        try:
+            post = await _blog_post_on_website(api, post_id, website_id,
+                                               ["id", "cover_properties"])
+            cover = post.get("cover_properties") or "{}"
+            if isinstance(cover, str):
+                try:
+                    cover = json.loads(cover)
+                except json.JSONDecodeError as exc:
+                    raise OdooApiError("Blog post cover properties are not valid JSON") from exc
+            if not isinstance(cover, dict):
+                raise OdooApiError("Blog post cover properties have an unexpected format")
+            attachment_id = await api.create("ir.attachment", {
+                "name": filename.strip(), "type": "binary", "datas": base64.b64encode(content).decode("ascii"),
+                "mimetype": mime, "public": True, "res_model": "blog.post", "res_id": post_id,
+            })
+            image_url = f"/web/image/ir.attachment/{attachment_id}/datas"
+            cover["background-image"] = f"url({image_url})"
+            values: dict[str, Any] = {"cover_properties": json.dumps(cover, ensure_ascii=False)}
+            if set_og_image:
+                values["website_meta_og_img"] = image_url
+            await api.write("blog.post", post_id, values)
+            return {"url": urljoin(await _website_url_base(api, website_id), image_url.lstrip("/"))}
         finally:
             await api.close()
 

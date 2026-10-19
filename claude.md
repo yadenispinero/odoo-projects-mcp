@@ -19,6 +19,8 @@ This file tracks engineering scope and decisions. It is not a compliance stateme
 - Python MCP server using Odoo JSON-2 over HTTPS.
 - Configurable named Odoo instances; a client names the target on each call.
 - Project, task, and website-page tools with input and field validation.
+- Blog translation writes use the selected active website language; public image covers are restricted to PNG, JPEG, or WebP up to 5 MB.
+- The `blog_scheduler` role is reserved; its tool remains pending anonymous checks on list, post URL, feed, and sitemap in Odoo 19 testing.
 - Bearer-token users, role-to-tool access control, token rotation/revocation, and a local admin page.
 - Add, edit, credential-test, deactivate, and reactivate Odoo connections from the local admin page; create/update re-test credentials server-side before persisting, and keys persist outside the source tree.
 - Per-user allowlists for configured Odoo instances, editable in the local admin page.

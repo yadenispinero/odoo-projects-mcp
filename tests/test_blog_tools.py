@@ -1,5 +1,7 @@
 import pytest
 import inspect
+import base64
+import json
 
 from odoo_mcp.auth import MCPUser, ROLE_TOOLS, current_mcp_user
 from odoo_mcp.config import OdooInstance
@@ -25,6 +27,9 @@ def test_blog_roles_are_separate_from_page_roles():
     assert {"search_pages", "get_page", "update_page_content", "publish_page", "unpublish_page"}.isdisjoint(blog_tools)
     assert "update_page_content" not in editor
     assert "create_blog_post" not in ROLE_TOOLS["website_editor"]
+    assert "set_blog_post_translation" in editor
+    assert "set_blog_post_cover" in editor
+    assert "schedule_blog_post" in ROLE_TOOLS["blog_scheduler"]
 
 
 @pytest.mark.asyncio
@@ -243,4 +248,149 @@ async def test_create_blog_post_accepts_blog_without_website(monkeypatch):
         current_mcp_user.reset(reset)
     assert result == {"post_id": 56}
     assert captured["values"]["is_published"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_blog_post_reads_selected_translation(monkeypatch):
+    captured = {}
+
+    class FakeOdoo:
+        instance = OdooInstance("demo", "https://odoo.example.test")
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 55}]
+        async def read(self, model, record_id, fields, context=None):
+            captured.setdefault("reads", []).append((model, record_id, context))
+            if model == "blog.post": return {"id": 55, "name": "Título", "website_url": "/blog/x"}
+            return {"domain": "https://news.example.test"}
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        post = await tools["get_blog_post"](
+            instance="demo", website_id=10, post_id=55, lang="es_ES", ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert post["name"] == "Título"
+    assert post["website_url"] == "https://news.example.test/blog/x"
+    assert ("blog.post", 55, {"lang": "es_ES"}) in captured["reads"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+async def test_set_blog_post_translation_uses_active_website_language_and_context(monkeypatch, api_type):
+    captured = {}
+
+    class FakeOdoo:
+        def __init__(self, instance):
+            self.instance = instance
+
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post":
+                assert domain == [["id", "=", 55], "|", ["website_id", "=", 10], ["website_id", "=", False]]
+                return [{"id": 55}]
+            assert model == "res.lang"
+            return [{"id": 2, "code": "es_ES"}, {"id": 3, "code": "de_DE"}]
+
+        async def read(self, model, record_id, fields, context=None):
+            assert (model, record_id, fields) == ("website", 10, ["language_ids"])
+            return {"language_ids": [[2, "es_ES"]]}
+
+        async def write(self, model, record_id, values, context=None):
+            captured.update(model=model, record_id=record_id, values=values, context=context)
+            return True
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test", api_type=api_type)}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["set_blog_post_translation"](
+            instance="demo", website_id=10, post_id=55, lang="es_ES", name="Título",
+            subtitle="Subtítulo", content="<p>Texto</p>", website_meta_title="SEO",
+            website_meta_description="Descripción", website_meta_keywords="palabras", seo_name="titulo", ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {"updated": True}
+    assert captured["context"] == {"lang": "es_ES"}
+    assert captured["values"]["content"] == "<p>Texto</p>"
+    assert "is_published" not in captured["values"]
+
+
+@pytest.mark.asyncio
+async def test_set_blog_post_translation_rejects_language_not_enabled_for_website(monkeypatch):
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 55}] if model == "blog.post" else [{"id": 2, "code": "es_ES"}]
+        async def read(self, model, record_id, fields, context=None): return {"language_ids": []}
+        async def write(self, *args, **kwargs): raise AssertionError("must reject before write")
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(ValueError, match="not active"):
+            await tools["set_blog_post_translation"](
+                instance="demo", website_id=10, post_id=55, lang="es_ES", name="x", subtitle="x",
+                content="x", website_meta_title="x", website_meta_description="x",
+                website_meta_keywords="x", ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+async def test_set_blog_post_cover_creates_public_attachment_and_merges_cover(monkeypatch, api_type):
+    captured = {}
+    original_cover = {"opacity": "0.8", "background-color": "#fff"}
+    # A minimal, signature-valid PNG header is enough for this validation test.
+    png = b"\x89PNG\r\n\x1a\n" + b"test"
+
+    class FakeOdoo:
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            if model == "blog.post":
+                return [{"id": 55, "cover_properties": json.dumps(original_cover)}]
+            raise AssertionError(model)
+        async def read(self, model, record_id, fields, context=None):
+            assert (model, record_id, fields) == ("website", 10, ["domain"])
+            return {"domain": "https://news.example.test"}
+        async def create(self, model, values):
+            captured["attachment"] = (model, values)
+            return 99
+        async def write(self, model, record_id, values):
+            captured["post_write"] = (model, record_id, values)
+            return True
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test", api_type=api_type)}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        result = await tools["set_blog_post_cover"](
+            instance="demo", website_id=10, post_id=55, image_base64=base64.b64encode(png).decode(),
+            filename="cover.png", ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    url = "/web/image/ir.attachment/99/datas"
+    assert result == {"url": "https://news.example.test" + url}
+    model, attachment = captured["attachment"]
+    assert model == "ir.attachment"
+    assert attachment["public"] is True and attachment["res_model"] == "blog.post" and attachment["res_id"] == 55
+    model, record_id, values = captured["post_write"]
+    assert (model, record_id) == ("blog.post", 55)
+    updated_cover = json.loads(values["cover_properties"])
+    assert updated_cover["opacity"] == "0.8" and updated_cover["background-color"] == "#fff"
+    assert updated_cover["background-image"] == f"url({url})"
+    assert values["website_meta_og_img"] == url
 

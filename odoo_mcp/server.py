@@ -5,7 +5,7 @@ import binascii
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -131,6 +131,34 @@ def _validate_date(value: str, label: str) -> str:
     return value
 
 
+def _future_blog_date(value: str) -> tuple[datetime, str]:
+    if not isinstance(value, str):
+        raise ValueError("post_date must be an ISO 8601 datetime with a timezone or UTC")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("post_date must be an ISO 8601 datetime with a timezone or UTC") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("post_date must include a timezone or Z for UTC")
+    utc_date = parsed.astimezone(timezone.utc)
+    if utc_date < datetime.now(timezone.utc) + timedelta(minutes=10):
+        raise ValueError("post_date must be at least 10 minutes in the future")
+    odoo_datetime = utc_date.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    return utc_date, odoo_datetime
+
+
+def _odoo_datetime_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _validate_visibility(value: str) -> None:
     allowed = {"followers", "invited_users", "employees", "portal"}
     if value not in allowed:
@@ -145,7 +173,8 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     )
     mcp_path = os.getenv("MCP_PATH", "/mcp")
     mcp = FastMCP("Odoo Projects and Website", host=os.getenv("MCP_HOST", "127.0.0.1"),
-                  port=int(os.getenv("MCP_PORT", "8000")), streamable_http_path=mcp_path)
+                  port=int(os.getenv("MCP_PORT", "8000")), streamable_http_path=mcp_path,
+                  stateless_http=True, json_response=True)
 
     def target(instance: str) -> OdooJson2:
         if instance not in configured:
@@ -573,7 +602,16 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             values: dict[str, Any] = {"cover_properties": json.dumps(cover, ensure_ascii=False)}
             if set_og_image:
                 values["website_meta_og_img"] = image_url
-            await api.write("blog.post", post_id, values)
+            try:
+                await api.write("blog.post", post_id, values)
+            except Exception as write_error:
+                try:
+                    await api.unlink("ir.attachment", attachment_id)
+                except Exception as cleanup_error:
+                    raise OdooApiError(
+                        "Blog cover update failed and the newly created attachment could not be removed"
+                    ) from cleanup_error
+                raise write_error
             return {"url": urljoin(await _website_url_base(api, website_id), image_url.lstrip("/"))}
         finally:
             await api.close()
@@ -683,6 +721,32 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         try:
             await _blog_post_on_website(api, post_id, website_id, ["id"])
             return {"unpublished": await api.write("blog.post", post_id, {"is_published": False})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def schedule_blog_post(instance: str, website_id: int, post_id: int,
+                                 post_date: str, ctx: Context) -> dict[str, Any]:
+        """Schedule a blog post for at least ten minutes in the future."""
+        require_tool_access("schedule_blog_post", instance)
+        website_id = _positive_id(website_id, "website_id")
+        post_id = _positive_id(post_id, "post_id")
+        scheduled_utc, odoo_post_date = _future_blog_date(post_date)
+        api = target(instance)
+        try:
+            post = await _blog_post_on_website(api, post_id, website_id, ["id", "is_published", "post_date"])
+            current_date = _odoo_datetime_utc(post.get("post_date"))
+            if post.get("is_published") and current_date is not None and current_date < datetime.now(timezone.utc):
+                raise ValueError("Cannot schedule a blog post that is already published with a past date")
+            await api.write("blog.post", post_id, {
+                "post_date": odoo_post_date,
+                "is_published": True,
+            })
+            return {
+                "scheduled": True,
+                "post_date": scheduled_utc.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "is_published": True,
+            }
         finally:
             await api.close()
 

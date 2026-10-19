@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "odoo-projects-mcp"
 version = "0.1.0"
-description = "Restricted MCP tools for Odoo 19 projects, tasks, and website pages"
+description = "Role-controlled MCP tools for Odoo 18/19 projects, tasks, website pages, and blog posts"
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27,<1",

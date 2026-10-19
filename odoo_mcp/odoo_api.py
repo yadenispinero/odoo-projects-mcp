@@ -114,6 +114,8 @@ class OdooJson2:
         if method == "write":
             kwargs = {"context": payload["context"]} if "context" in payload else {}
             return [payload["ids"], payload["vals"]], kwargs
+        if method == "unlink":
+            return [payload["ids"]], {}
         raise OdooApiError(f"Unsupported XML-RPC method {method}")
 
     async def search_read(
@@ -158,4 +160,10 @@ class OdooJson2:
         result = await self.call(model, "write", payload)
         if result is not True:
             raise OdooApiError(f"Unexpected response from {model}.write")
+        return result
+
+    async def unlink(self, model: str, record_id: int) -> bool:
+        result = await self.call(model, "unlink", {"ids": [record_id]})
+        if result is not True:
+            raise OdooApiError(f"Unexpected response from {model}.unlink")
         return result

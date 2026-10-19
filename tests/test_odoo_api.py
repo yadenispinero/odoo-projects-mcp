@@ -139,9 +139,40 @@ async def test_create_rejects_unexpected_ids_response(response_value):
     ("write", {"ids": [9], "vals": {"name": "Y"}}, ([[9], {"name": "Y"}], {})),
     ("write", {"ids": [9], "vals": {"name": "Y"}, "context": {"lang": "es_ES"}},
      ([[9], {"name": "Y"}], {"context": {"lang": "es_ES"}})),
+    ("unlink", {"ids": [9]}, ([[9]], {})),
 ])
 def test_xmlrpc_operation_arguments(method, payload, expected):
     assert OdooJson2._xmlrpc_arguments(method, payload) == expected
+
+
+@pytest.mark.asyncio
+async def test_json2_unlink_uses_ids_and_returns_true():
+    seen = {}
+    def handler(request):
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(200, json=True)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance("test", "https://odoo.example.test", "secret"), client)
+    assert await api.unlink("ir.attachment", 9) is True
+    assert seen["payload"] == {"ids": [9]}
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_xmlrpc_unlink_uses_ids_argument():
+    def handler(request):
+        params, method = xmlrpc.client.loads(request.read())
+        if request.url.path.endswith("/common"):
+            assert method == "authenticate"
+            return xmlrpc_response(7)
+        assert (params[3], params[4], params[5]) == ("ir.attachment", "unlink", [[9]])
+        return xmlrpc_response(True)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = OdooJson2(OdooInstance(
+        "test", "https://odoo.example.test", "secret", "db1", "xmlrpc", "user@example.test"
+    ), client)
+    assert await api.unlink("ir.attachment", 9) is True
+    await client.aclose()
 
 
 @pytest.mark.asyncio

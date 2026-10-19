@@ -26,10 +26,11 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Search and read projects and tasks.
 - Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
-- List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Editors can write active-language translations and attach public cover images. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
+- List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Editors can write active-language translations and attach public cover images; schedulers can set a future publication time. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
+- Until its scheduled date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
 - Manage Odoo connections, users, roles, token rotation, and revocation in a local admin page.
-- Connect to Odoo 19 through its JSON-2 API over HTTPS.
+- Connect to Odoo 19+ through JSON-2 or Odoo 18 through XML-RPC over HTTPS.
 
 ## Security model and current limits
 
@@ -86,7 +87,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `publisher` | Publish and unpublish pages |
 | `blog_editor` | List websites and blogs; search, read, create, and edit blog posts |
 | `blog_publisher` | List websites and blogs; search, read, publish, and unpublish blog posts |
-| `blog_scheduler` | Reserved role for future-date blog scheduling; the scheduling tool is pending staging verification |
+| `blog_scheduler` | Schedule blog posts for a future date |
 | `administrator` | All currently registered tools and user administration |
 
 Roles can be combined for a user. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.

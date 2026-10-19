@@ -2,9 +2,11 @@ import pytest
 import inspect
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 
 from odoo_mcp.auth import MCPUser, ROLE_TOOLS, current_mcp_user
 from odoo_mcp.config import OdooInstance
+from odoo_mcp.odoo_api import OdooApiError
 from odoo_mcp.server import create_server
 
 
@@ -393,4 +395,104 @@ async def test_set_blog_post_cover_creates_public_attachment_and_merges_cover(mo
     assert updated_cover["opacity"] == "0.8" and updated_cover["background-color"] == "#fff"
     assert updated_cover["background-image"] == f"url({url})"
     assert values["website_meta_og_img"] == url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+async def test_set_blog_post_cover_removes_new_attachment_when_post_write_fails(monkeypatch, api_type):
+    deleted = []
+    png = b"\x89PNG\r\n\x1a\ntrailer"
+
+    class FakeOdoo:
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 55, "cover_properties": "{}"}]
+        async def create(self, model, values): return 101
+        async def write(self, model, record_id, values): raise OdooApiError("post write failed")
+        async def unlink(self, model, record_id): deleted.append((model, record_id)); return True
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test", api_type=api_type)}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        with pytest.raises(OdooApiError, match="post write failed"):
+            await tools["set_blog_post_cover"](
+                instance="demo", website_id=10, post_id=55,
+                image_base64=base64.b64encode(png).decode(), filename="cover.png", ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
+    assert deleted == [("ir.attachment", 101)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_type", ["json2", "xmlrpc"])
+async def test_schedule_blog_post_sets_utc_date_and_published_state(monkeypatch, api_type):
+    captured = {}
+    future = (datetime.now(timezone.utc) + timedelta(minutes=20)).replace(microsecond=0)
+    iso_date = future.isoformat().replace("+00:00", "Z")
+
+    class FakeOdoo:
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            assert model == "blog.post"
+            return [{"id": 55, "is_published": False, "post_date": "2020-01-01 00:00:00"}]
+        async def write(self, model, record_id, values):
+            captured.update(model=model, record_id=record_id, values=values)
+            return True
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test", api_type=api_type)}))
+    reset = current_mcp_user.set(mcp_user("blog_scheduler"))
+    try:
+        result = await tools["schedule_blog_post"](
+            instance="demo", website_id=10, post_id=55, post_date=iso_date, ctx=None,
+        )
+    finally:
+        current_mcp_user.reset(reset)
+    assert result == {"scheduled": True, "post_date": iso_date, "is_published": True}
+    assert captured == {
+        "model": "blog.post", "record_id": 55,
+        "values": {"post_date": future.strftime("%Y-%m-%d %H:%M:%S"), "is_published": True},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("post_date", ["2020-01-01T00:00:00Z", "2030-01-01T00:00:00"])
+async def test_schedule_blog_post_rejects_nonfuture_or_timezone_free_dates(monkeypatch, post_date):
+    class FakeOdoo:
+        def __init__(self, instance): raise AssertionError("validate before contacting Odoo")
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_scheduler"))
+    try:
+        with pytest.raises(ValueError):
+            await tools["schedule_blog_post"](
+                instance="demo", website_id=10, post_id=55, post_date=post_date, ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
+
+
+@pytest.mark.asyncio
+async def test_schedule_blog_post_rejects_published_past_post(monkeypatch):
+    class FakeOdoo:
+        def __init__(self, instance): self.instance = instance
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 55, "is_published": True, "post_date": "2020-01-01 00:00:00"}]
+        async def write(self, *args, **kwargs): raise AssertionError("must reject before write")
+        async def close(self): pass
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_scheduler"))
+    try:
+        with pytest.raises(ValueError, match="already published"):
+            await tools["schedule_blog_post"](
+                instance="demo", website_id=10, post_id=55,
+                post_date=(datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat(), ctx=None,
+            )
+    finally:
+        current_mcp_user.reset(reset)
 

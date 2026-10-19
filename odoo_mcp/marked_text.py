@@ -88,10 +88,11 @@ def _inline_html(text: str) -> str:
 
 
 def clean_docs_export(text: str) -> list[str]:
-    """Return lines without trailing spaces, Docs escapes, or repeated blank lines."""
+    """Return lines without byte order marks, trailing spaces, Docs escapes, or repeated blank lines."""
     lines: list[str] = []
     for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = _DOCS_ESCAPE.sub(r"\1", raw_line.rstrip())
+        # Google Docs text/plain exports start with a BOM (U+FEFF).
+        line = _DOCS_ESCAPE.sub(r"\1", raw_line.replace("\ufeff", "").rstrip())
         if not line.strip():
             if lines and lines[-1] != "":
                 lines.append("")

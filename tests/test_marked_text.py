@@ -29,6 +29,12 @@ def test_cleans_real_google_docs_export():
     )
 
 
+def test_ignores_byte_order_mark_from_docs_export():
+    document = convert_marked_text("\ufeffH1: Título\r\n\r\n\r\nH2: Intro")
+    assert document.title == "Título"
+    assert document.html == "<h2>Intro</h2>"
+
+
 def test_unescapes_docs_escapes_and_escapes_html():
     document = convert_marked_text("\\#Odoo \\*bold\\* \\[x\\] a & b <tag> 5 > 3")
     assert document.html == "<p>#Odoo *bold* [x] a &amp; b &lt;tag&gt; 5 &gt; 3</p>"

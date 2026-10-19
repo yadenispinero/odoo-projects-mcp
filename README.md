@@ -28,6 +28,7 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. Editors can write active-language translations and attach public cover images; schedulers can set a future publication time. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
 - Until its scheduled date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it.
+- Scheduling also sends Odoo's new-post notification to blog followers immediately.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
 - Manage Odoo connections, users, roles, token rotation, and revocation in a local admin page.
 - Connect to Odoo 19+ through JSON-2 or Odoo 18 through XML-RPC over HTTPS.

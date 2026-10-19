@@ -437,7 +437,7 @@ async def test_schedule_blog_post_sets_utc_date_and_published_state(monkeypatch,
         def __init__(self, instance): self.instance = instance
         async def search_read(self, model, domain, fields, limit, order="id desc"):
             assert model == "blog.post"
-            return [{"id": 55, "is_published": False, "post_date": "2020-01-01 00:00:00"}]
+            return [{"id": 55, "is_published": False, "published_date": "2020-01-01 00:00:00"}]
         async def write(self, model, record_id, values):
             captured.update(model=model, record_id=record_id, values=values)
             return True
@@ -455,7 +455,7 @@ async def test_schedule_blog_post_sets_utc_date_and_published_state(monkeypatch,
     assert result == {"scheduled": True, "post_date": iso_date, "is_published": True}
     assert captured == {
         "model": "blog.post", "record_id": 55,
-        "values": {"post_date": future.strftime("%Y-%m-%d %H:%M:%S"), "is_published": True},
+        "values": {"published_date": future.strftime("%Y-%m-%d %H:%M:%S"), "is_published": True},
     }
 
 
@@ -481,7 +481,7 @@ async def test_schedule_blog_post_rejects_published_past_post(monkeypatch):
     class FakeOdoo:
         def __init__(self, instance): self.instance = instance
         async def search_read(self, model, domain, fields, limit, order="id desc"):
-            return [{"id": 55, "is_published": True, "post_date": "2020-01-01 00:00:00"}]
+            return [{"id": 55, "is_published": True, "published_date": "2020-01-01 00:00:00"}]
         async def write(self, *args, **kwargs): raise AssertionError("must reject before write")
         async def close(self): pass
     monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)

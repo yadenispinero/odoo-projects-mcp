@@ -734,12 +734,12 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         scheduled_utc, odoo_post_date = _future_blog_date(post_date)
         api = target(instance)
         try:
-            post = await _blog_post_on_website(api, post_id, website_id, ["id", "is_published", "post_date"])
-            current_date = _odoo_datetime_utc(post.get("post_date"))
+            post = await _blog_post_on_website(api, post_id, website_id, ["id", "is_published", "published_date"])
+            current_date = _odoo_datetime_utc(post.get("published_date"))
             if post.get("is_published") and current_date is not None and current_date < datetime.now(timezone.utc):
                 raise ValueError("Cannot schedule a blog post that is already published with a past date")
             await api.write("blog.post", post_id, {
-                "post_date": odoo_post_date,
+                "published_date": odoo_post_date,
                 "is_published": True,
             })
             return {

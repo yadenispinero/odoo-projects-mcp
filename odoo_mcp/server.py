@@ -183,6 +183,22 @@ async def _website_url_base(api: OdooJson2, website_id: int) -> str:
     return domain.rstrip("/") + "/"
 
 
+_COVER_IMAGE_URL = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)")
+
+
+def _cover_image_url(cover_properties: Any, base_url: str) -> str | None:
+    """Return the absolute URL of a blog post cover image, or None without one."""
+    if isinstance(cover_properties, str):
+        try:
+            cover_properties = json.loads(cover_properties or "{}")
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(cover_properties, dict):
+        return None
+    match = _COVER_IMAGE_URL.search(str(cover_properties.get("background-image") or ""))
+    return urljoin(base_url, match.group(1).lstrip("/")) if match else None
+
+
 def _absolute_blog_post_url(post: dict[str, Any], base_url: str) -> dict[str, Any]:
     path = post.get("website_url")
     if isinstance(path, str) and path:
@@ -597,7 +613,11 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def get_blog_post(instance: str, website_id: int, post_id: int,
                             ctx: Context, lang: str | None = None) -> dict[str, Any]:
-        """Read an allowlisted set of fields from one post on the selected website."""
+        """Read an allowlisted set of fields from one post on the selected website.
+
+        cover_image_url is the absolute URL of the cover image, or null without one;
+        it can be used as website_meta_og_img.
+        """
         require_tool_access("get_blog_post", instance)
         website_id = _positive_id(website_id, "website_id")
         post_id = _positive_id(post_id, "post_id")
@@ -605,7 +625,9 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             _validate_lang_code(lang)
         api = target(instance)
         try:
-            post = await _blog_post_on_website(api, post_id, website_id, BLOG_POST_FIELDS)
+            post = await _blog_post_on_website(api, post_id, website_id,
+                                               BLOG_POST_FIELDS + ["cover_properties"])
+            cover_properties = post.pop("cover_properties", None)
             if lang is not None:
                 languages = await api.search_read(
                     "res.lang", [["code", "=", lang], ["active", "=", True]], ["id", "code"], 1
@@ -613,7 +635,9 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                 if not languages:
                     raise ValueError(f"Language {lang} is not installed or active in Odoo")
                 post = await api.read("blog.post", post_id, BLOG_POST_FIELDS, context={"lang": lang})
-            return _absolute_blog_post_url(post, await _website_url_base(api, website_id))
+            base_url = await _website_url_base(api, website_id)
+            post["cover_image_url"] = _cover_image_url(cover_properties, base_url)
+            return _absolute_blog_post_url(post, base_url)
         finally:
             await api.close()
 

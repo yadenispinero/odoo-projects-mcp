@@ -788,3 +788,15 @@ async def test_blog_post_lang_must_be_website_primary_language(monkeypatch):
     finally:
         current_mcp_user.reset(reset)
     assert captured == {}
+
+
+def test_cover_image_url_reads_background_image():
+    from odoo_mcp.server import _cover_image_url
+    base = "https://www.example.test/"
+    assert _cover_image_url('{"background-image": "url(/web/image/12-ab/cover.png)"}', base) == \
+        "https://www.example.test/web/image/12-ab/cover.png"
+    assert _cover_image_url({"background-image": "url('/web/image/ir.attachment/7/datas')"}, base) == \
+        "https://www.example.test/web/image/ir.attachment/7/datas"
+    assert _cover_image_url('{"background-image": "none"}', base) is None
+    assert _cover_image_url("not json", base) is None
+    assert _cover_image_url(False, base) is None

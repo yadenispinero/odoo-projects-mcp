@@ -51,7 +51,7 @@ The content generator saves long-form posts to a Google Doc as marked text, whic
 
 Before converting, trailing spaces, repeated blank lines, and the Google Docs escapes `\_ \# \* \[ \]` are cleaned, and `&`, `<` and `>` are escaped. The output has no classes or styles, and no content is added or removed: hashtags, calls to action, and similar decisions belong to the generator or the reviewer.
 
-For a translation, pass the translated marked text with the same structure as the primary-language text as `content_marked_text`. Its blocks are paired by position with the post's Odoo translation terms. If the number or type of blocks differs, or the post contains terms outside its text blocks, the call fails without writing anything; use `content_terms` for such posts. A translated H1 line becomes that language's `name` unless `name` is passed.
+For a translation, pass the translated marked text with the same structure as the primary-language text as `content_marked_text`. Its blocks are paired by position with the post's Odoo translation terms. Odoo translates each link separately from the text before and after it (bold and italics stay inside the term), so each block must also keep the same links. A marked-text link's text is its URL, so a source link with descriptive text, such as «CEPAL press release», is translated with the URL; use `content_terms` to translate such link texts. If the number or type of blocks or links differs, or the post contains terms outside its text blocks, the call fails without writing anything; use `content_terms` for such posts. A translated H1 line becomes that language's `name` unless `name` is passed.
 
 ## Security model and current limits
 

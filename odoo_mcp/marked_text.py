@@ -151,13 +151,37 @@ def convert_marked_text(text: str) -> MarkedTextDocument:
     return MarkedTextDocument(title, blocks)
 
 
+Segment = tuple[str, str]
+"""``(kind, text)`` where kind is ``"text"`` or ``"link"``: one Odoo translation term."""
+
+_LINK = re.compile(r"(<a\b[^>]*>.*?</a>)", re.DOTALL)
+_LINK_INNER = re.compile(r"<a\b[^>]*>(.*?)</a>", re.DOTALL)
+
+
+def block_segments(inner_html: str) -> list[Segment]:
+    """Split a block's inner HTML into Odoo translation terms.
+
+    Odoo keeps inline formatting such as ``strong`` and ``em`` inside a term,
+    but translates each link separately: the text before, inside and after
+    every ``a`` element is its own term. Terms are stripped and empty ones are
+    dropped, as Odoo does.
+    """
+    segments: list[Segment] = []
+    for piece in _LINK.split(inner_html):
+        link = _LINK_INNER.fullmatch(piece)
+        kind, value = ("link", link.group(1)) if link else ("text", piece)
+        if value.strip():
+            segments.append((kind, value.strip()))
+    return segments
+
+
 class _BlockTextParser(HTMLParser):
-    """Collect the visible text of each block element in document order."""
+    """Collect the visible text of each block element, split into Odoo terms."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.blocks: list[tuple[str, str]] = []
-        self._stack: list[tuple[str, list[str]]] = []
+        self.blocks: list[tuple[str, list[Segment]]] = []
+        self._stack: list[dict] = []
         self._outside: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
@@ -165,17 +189,23 @@ class _BlockTextParser(HTMLParser):
             self._flush_outside()
             if tag == "li" and self._stack:
                 self._end_block()
-            self._stack.append((tag, []))
+            self._stack.append({"tag": tag, "segments": [], "chunks": [], "in_link": False})
+        elif tag == "a" and self._stack:
+            self._flush_segment(self._stack[-1])
+            self._stack[-1]["in_link"] = True
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _BLOCK_TAGS and self._stack:
+        if tag == "a" and self._stack and self._stack[-1]["in_link"]:
+            self._flush_segment(self._stack[-1])
+            self._stack[-1]["in_link"] = False
+        elif tag in _BLOCK_TAGS and self._stack:
             self._end_block()
-        elif tag in {"ul", "ol"} and self._stack and self._stack[-1][0] == "li":
+        elif tag in {"ul", "ol"} and self._stack and self._stack[-1]["tag"] == "li":
             self._end_block()
 
     def handle_data(self, data: str) -> None:
         if self._stack:
-            self._stack[-1][1].append(data)
+            self._stack[-1]["chunks"].append(data)
         else:
             self._outside.append(data)
 
@@ -185,17 +215,24 @@ class _BlockTextParser(HTMLParser):
             self._end_block()
         self._flush_outside()
 
-    def _end_block(self) -> None:
-        tag, chunks = self._stack.pop()
-        text = normalize_text("".join(chunks))
+    @staticmethod
+    def _flush_segment(block: dict) -> None:
+        text = normalize_text("".join(block["chunks"]))
+        block["chunks"].clear()
         if text:
-            self.blocks.append((tag, text))
+            block["segments"].append(("link" if block["in_link"] else "text", text))
+
+    def _end_block(self) -> None:
+        block = self._stack.pop()
+        self._flush_segment(block)
+        if block["segments"]:
+            self.blocks.append((block["tag"], block["segments"]))
 
     def _flush_outside(self) -> None:
         text = normalize_text("".join(self._outside))
         self._outside.clear()
         if text:
-            self.blocks.append(("text", text))
+            self.blocks.append(("text", [("text", text)]))
 
 
 def normalize_text(value: str) -> str:
@@ -203,15 +240,15 @@ def normalize_text(value: str) -> str:
 
 
 def term_text(term: str) -> str:
-    """Visible text of an Odoo term (inner HTML of a block)."""
+    """Visible text of an Odoo term."""
     parser = _BlockTextParser()
     parser.feed(f"<p>{term}</p>")
     parser.close()
-    return " ".join(text for _, text in parser.blocks)
+    return " ".join(text for _, segments in parser.blocks for _, text in segments)
 
 
-def html_blocks(content: str) -> list[tuple[str, str]]:
-    """Return ``(tag, visible text)`` for each non-empty block of HTML content."""
+def html_blocks(content: str) -> list[tuple[str, list[Segment]]]:
+    """Return ``(tag, segments)`` for each non-empty block of HTML content."""
     parser = _BlockTextParser()
     parser.feed(content or "")
     parser.close()
@@ -224,8 +261,10 @@ def pair_translation_terms(source_content: str, source_terms: list[str],
 
     ``source_content`` is the post's HTML in the primary language and
     ``source_terms`` are its Odoo terms in order (Odoo lists each distinct
-    term once). Raises MarkedTextError when the block count or block types
-    differ, or when a repeated source block receives different translations.
+    term once). Each link and the text around it are separate terms, so both
+    texts must also have the same links in each block. Raises MarkedTextError
+    when the block count, block types or links differ, or when a repeated
+    source term receives different translations.
     """
     source_blocks = html_blocks(source_content)
     translated_tags = ["li" if block.tag.startswith("li:") else block.tag for block in translated.blocks]
@@ -242,15 +281,30 @@ def pair_translation_terms(source_content: str, source_terms: list[str],
                 "primary-language content; both texts must have the same structure"
             )
 
+    units: list[tuple[int, str, str]] = []
+    for position, ((_, source_segments), block) in enumerate(zip(source_blocks, translated.blocks), start=1):
+        translated_segments = block_segments(block.html)
+        source_kinds = [kind for kind, _ in source_segments]
+        translated_kinds = [kind for kind, _ in translated_segments]
+        if source_kinds != translated_kinds:
+            raise MarkedTextError(
+                f"Block {position} has {translated_kinds.count('link')} links and "
+                f"{len(translated_kinds)} translation terms in content_marked_text, but "
+                f"{source_kinds.count('link')} links and {len(source_kinds)} terms in the "
+                "primary-language content; both texts must keep the same links in each block"
+            )
+        units.extend((position, text, translated_html)
+                     for (_, text), (_, translated_html) in zip(source_segments, translated_segments))
+
     pairs: dict[str, str] = {}
     by_text: dict[str, str] = {}
     remaining = list(source_terms)
-    for position, ((_, text), block) in enumerate(zip(source_blocks, translated.blocks), start=1):
+    for position, text, translated_html in units:
         if text in by_text:
             term = by_text[text]
-            if pairs[term] != block.html:
+            if pairs[term] != translated_html:
                 raise MarkedTextError(
-                    f"Block {position} repeats an earlier primary-language block but has a different "
+                    f"Block {position} repeats an earlier primary-language term but has a different "
                     "translation; Odoo stores one translation per repeated term"
                 )
             continue
@@ -261,7 +315,7 @@ def pair_translation_terms(source_content: str, source_terms: list[str],
             )
         term = remaining.pop(0)
         by_text[text] = term
-        pairs[term] = block.html
+        pairs[term] = translated_html
     if remaining:
         raise MarkedTextError(
             "The primary-language content has translation terms outside its text blocks; "

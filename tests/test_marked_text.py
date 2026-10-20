@@ -70,9 +70,8 @@ SOURCE_HTML = (
     "<h2>Section</h2>\n<p>Read <a href=\"https://example.test\">https://example.test</a> today.</p>\n"
     "<ul>\n<li>first</li>\n<li>second</li>\n</ul>"
 )
-SOURCE_TERMS = [
-    "Section", 'Read <a href="https://example.test">https://example.test</a> today.', "first", "second",
-]
+# Odoo translates each link separately from the text before and after it.
+SOURCE_TERMS = ["Section", "Read", "https://example.test", "today.", "first", "second"]
 
 
 def test_pairs_translation_terms_by_position():
@@ -81,11 +80,41 @@ def test_pairs_translation_terms_by_position():
     )
     assert pair_translation_terms(SOURCE_HTML, SOURCE_TERMS, translated) == {
         "Section": "Sección",
-        'Read <a href="https://example.test">https://example.test</a> today.':
-            'Lee <a href="https://example.test">https://example.test</a> hoy.',
+        "Read": "Lee",
+        "https://example.test": "https://example.test",
+        "today.": "hoy.",
         "first": "primero",
         "second": "segundo",
     }
+
+
+def test_pairs_terms_split_by_links_as_odoo_18_does():
+    # Real Odoo 18 terms of a paragraph with two links, followed by another one
+    # whose closing ")." repeats; Odoo lists that term only once.
+    source = (
+        '<p>Datos del <a href="https://a.test">ILIA 2026</a> sobre el <strong>6,8%</strong> '
+        '(<a href="https://b.test">CEPAL</a>).</p>\n'
+        '<p>Solo el <strong>35%</strong> (<a href="https://c.test">WIRED</a>).</p>'
+    )
+    terms = ["Datos del", "ILIA 2026", "sobre el <strong>6,8%</strong> (", "CEPAL", ").",
+             "Solo el <strong>35%</strong> (", "WIRED"]
+    translated = convert_marked_text(
+        "Data from the https://a.test on the 6.8% (https://b.test).\n\n"
+        "Only 35% (https://c.test)."
+    )
+    pairs = pair_translation_terms(source, terms, translated)
+    assert pairs["Datos del"] == "Data from the"
+    assert pairs["ILIA 2026"] == "https://a.test"
+    assert pairs["sobre el <strong>6,8%</strong> ("] == "on the 6.8% ("
+    assert pairs[")."] == ")."
+    assert pairs["Solo el <strong>35%</strong> ("] == "Only 35% ("
+    assert set(pairs) == set(terms)
+
+
+def test_pairing_rejects_different_links_in_a_block():
+    translated = convert_marked_text("H2: Sección\n\nLee hoy.\n\n• primero\n• segundo")
+    with pytest.raises(MarkedTextError, match="Block 2 has 0 links .* but 1 links"):
+        pair_translation_terms(SOURCE_HTML, SOURCE_TERMS, translated)
 
 
 def test_pairing_rejects_different_block_count():

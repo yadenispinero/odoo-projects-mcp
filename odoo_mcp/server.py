@@ -592,6 +592,37 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
+    async def update_blog(instance: str, website_id: int, blog_id: int, lang: str, ctx: Context,
+                          name: str | None = None, subtitle: str | None = None) -> dict[str, bool]:
+        """Rename a blog or change its subtitle in one active website language.
+
+        The blog must belong to the selected website or have no website assigned. Renaming
+        changes the blog's URL slug; Odoo redirects old post URLs that keep the same IDs.
+        """
+        require_tool_access("update_blog", instance)
+        website_id = _positive_id(website_id, "website_id")
+        blog_id = _positive_id(blog_id, "blog_id")
+        _validate_lang_code(lang)
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip():
+                raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        if subtitle is not None:
+            values["subtitle"] = subtitle
+        if not values:
+            raise ValueError("Provide name or subtitle to update")
+        api = target(instance)
+        try:
+            await _blog_for_website(api, blog_id, website_id)
+            _, active_codes = await _blog_website_languages(api, website_id)
+            if lang not in active_codes:
+                raise ValueError(f"Language {lang} is not active on website {website_id}")
+            return {"updated": await api.write("blog.blog", blog_id, values, context={"lang": lang})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
     async def search_blog_posts(instance: str, website_id: int, ctx: Context, query: str = "",
                                 blog_id: int | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """Search blog posts on the selected website; results include publish date and URL."""

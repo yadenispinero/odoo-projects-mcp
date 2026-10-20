@@ -28,6 +28,7 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. `create_blog_post` and `update_blog_post` write in the Odoo connection user's language, which must be the website's primary language. To translate a post, create it in the primary language, call `get_blog_post_translation_terms`, then send the returned term map as `content_terms` to `set_blog_post_translation`; this updates HTML terms without replacing the primary content. Editors can attach public cover images; schedulers can set a future publication time. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
 - `create_blog_post` and `update_blog_post` accept `content_format`: `html` (default, content stored as given) or `marked_text`. `set_blog_post_translation` accepts `content_marked_text` as an alternative to `content_terms`. See [Marked text format](#marked-text-format).
+- `update_blog` renames a blog or changes its subtitle in one active website language (`lang` is required). Renaming changes the blog's URL slug.
 - `get_blog_post` returns `cover_image_url`, the absolute URL of the post's cover image (or `null`), so a client can reuse it as `website_meta_og_img`.
 - `create_blog_post` and `update_blog_post` accept an optional `lang` (Odoo code such as `en_US`). It must be the website's primary language, otherwise the call fails without writing; the post is then written in that language whatever the Odoo user's language is. Clients use it to check that their original text is in the language Odoo expects before adding translations.
 - Until its scheduled date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it.
@@ -107,7 +108,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `project_manager` | Search, read, create, update, archive, and restore projects; list task stages |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
-| `blog_editor` | List websites and blogs; search, read, create, edit, and translate blog posts |
+| `blog_editor` | List websites and blogs; rename blogs per language; search, read, create, edit, and translate blog posts |
 | `blog_publisher` | List websites and blogs; search, read, publish, and unpublish blog posts |
 | `blog_scheduler` | Schedule blog posts for a future date |
 | `administrator` | All currently registered tools and user administration |

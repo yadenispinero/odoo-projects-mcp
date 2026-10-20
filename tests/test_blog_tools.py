@@ -32,6 +32,7 @@ def test_blog_roles_are_separate_from_page_roles():
     assert "set_blog_post_translation" in editor
     assert "get_blog_post_translation_terms" in editor
     assert "set_blog_post_cover" in editor
+    assert "update_blog" in editor and "update_blog" not in publisher
     assert "schedule_blog_post" in ROLE_TOOLS["blog_scheduler"]
 
 
@@ -800,3 +801,37 @@ def test_cover_image_url_reads_background_image():
     assert _cover_image_url('{"background-image": "none"}', base) is None
     assert _cover_image_url("not json", base) is None
     assert _cover_image_url(False, base) is None
+
+
+@pytest.mark.asyncio
+async def test_update_blog_writes_name_in_active_language(monkeypatch):
+    writes = []
+
+    class FakeOdoo:
+        def __init__(self, instance): pass
+        async def read(self, model, record_id, fields, context=None):
+            if model == "blog.blog": return {"id": 1, "website_id": False}
+            return {"language_ids": [2, 3], "default_lang_id": [2, "English"]}
+        async def search_read(self, model, domain, fields, limit, order="id desc"):
+            return [{"id": 2, "code": "en_US"}, {"id": 3, "code": "de_DE"}]
+        async def write(self, model, record_id, values, context=None):
+            writes.append((model, record_id, values, context))
+            return True
+        async def close(self): pass
+
+    monkeypatch.setattr("odoo_mcp.server.OdooJson2", FakeOdoo)
+    tools = tools_for(create_server({"demo": OdooInstance("demo", "https://odoo.example.test")}))
+    reset = current_mcp_user.set(mcp_user("blog_editor"))
+    try:
+        assert await tools["update_blog"](instance="demo", website_id=10, blog_id=1, lang="de_DE",
+                                          name=" Einsteigen bitte ", subtitle="Digitalisierung", ctx=None) \
+            == {"updated": True}
+        with pytest.raises(ValueError, match="not active"):
+            await tools["update_blog"](instance="demo", website_id=10, blog_id=1, lang="fr_FR",
+                                       name="x", ctx=None)
+        with pytest.raises(ValueError, match="Provide name or subtitle"):
+            await tools["update_blog"](instance="demo", website_id=10, blog_id=1, lang="de_DE", ctx=None)
+    finally:
+        current_mcp_user.reset(reset)
+    assert writes == [("blog.blog", 1, {"name": "Einsteigen bitte", "subtitle": "Digitalisierung"},
+                       {"lang": "de_DE"})]

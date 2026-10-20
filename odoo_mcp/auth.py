@@ -31,7 +31,7 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     "website_editor": frozenset({"update_page_content"}),
     "publisher": frozenset({"publish_page", "unpublish_page"}),
     "blog_editor": frozenset({
-        "list_websites", "search_blogs", "search_blog_posts", "get_blog_post",
+        "list_websites", "search_blogs", "update_blog", "search_blog_posts", "get_blog_post",
         "create_blog_post", "update_blog_post",
         "get_blog_post_translation_terms", "set_blog_post_translation", "set_blog_post_cover",
     }),

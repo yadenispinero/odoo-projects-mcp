@@ -7,10 +7,13 @@ services:
       - ${MCP_CONNECTIONS_DIR:-./local}/.env
     ports:
       - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-8000}:8000"
+      # The admin page is always published to loopback only, whatever MCP_BIND is.
+      - "127.0.0.1:${MCP_ADMIN_PORT:-8001}:8001"
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 8000
       MCP_PATH: /mcp
+      MCP_ADMIN_PORT: 8001
       ODOO_INSTANCES_FILE: /run/secrets/odoo_instances
       ODOO_INSTANCES_STORE: /data/odoo-instances.json
       MCP_USERS_FILE: /run/secrets/mcp_users

@@ -5,13 +5,14 @@ import binascii
 import json
 import os
 import re
+import socket
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from .admin import create_admin_routes
+from .admin import AdminPortMiddleware, create_admin_routes
 from .auth import BearerAuthMiddleware, UserDirectory, require_tool_access
 from .config import InstanceDirectory, OdooInstance, load_instances
 from .marked_text import MarkedTextError, convert_marked_text, pair_translation_terms
@@ -1062,4 +1063,16 @@ def main() -> None:
         on_instances_changed=refresh_instances,
     ))
     app.add_middleware(BearerAuthMiddleware, directory=users, mcp_path=os.getenv("MCP_PATH", "/mcp"))
-    uvicorn.run(app, host=os.getenv("MCP_HOST", "127.0.0.1"), port=int(os.getenv("MCP_PORT", "8000")))
+    host = os.getenv("MCP_HOST", "127.0.0.1")
+    port = int(os.getenv("MCP_PORT", "8000"))
+    admin_port = int(os.environ["MCP_ADMIN_PORT"]) if os.getenv("MCP_ADMIN_PORT") else None
+    if admin_port is None:
+        uvicorn.run(app, host=host, port=port)
+        return
+    if admin_port == port:
+        raise ValueError("MCP_ADMIN_PORT must differ from MCP_PORT")
+    # One server, two sockets: the admin port can then be published to loopback only.
+    app.add_middleware(AdminPortMiddleware, admin_port=admin_port)
+    sockets = [socket.create_server((host, port)),
+               socket.create_server((os.getenv("MCP_ADMIN_HOST", host), admin_port))]
+    uvicorn.Server(uvicorn.Config(app)).run(sockets=sockets)

@@ -382,6 +382,31 @@ ADMIN_PAGE = r"""<!doctype html>
 </html>"""
 
 
+class AdminPortMiddleware:
+    """Serve the admin page only on its own listening port and the MCP only on the others."""
+
+    def __init__(self, app, admin_port: int | None):
+        self.app = app
+        self.admin_port = admin_port
+
+    async def __call__(self, scope, receive, send):
+        if self.admin_port is not None and scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            admin_path = path == "/admin" or path.startswith("/admin/")
+            server_port = (scope.get("server") or (None, None))[1]
+            if admin_path != (server_port == self.admin_port):
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                    return
+                body = b"Not Found"
+                await send({"type": "http.response.start", "status": 404,
+                            "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                        (b"content-length", str(len(body)).encode("ascii"))]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
 async def _authorized_admin(request: Request, directory: UserDirectory):
     token = bearer_token(request.headers)
     user = directory.authenticate(token) if token else None

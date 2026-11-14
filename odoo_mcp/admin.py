@@ -12,6 +12,8 @@ from .odoo_api import OdooApiError, OdooJson2
 ROLE_GROUPS = [
     {"module": "Proyectos", "roles": ["project_manager"]},
     {"module": "Tareas", "roles": ["task_editor", "task_archiver"]},
+    {"module": "Soporte", "roles": ["support_ticket_editor"]},
+    {"module": "Compras y facturación", "roles": ["purchase_viewer", "purchase_manager", "purchase_approver", "vendor_bill_creator"]},
     {"module": "Sitio web", "roles": ["website_editor", "publisher"]},
     {"module": "Blog", "roles": ["blog_editor", "blog_publisher", "blog_scheduler"]},
     {"module": "Acceso general", "roles": ["viewer", "administrator"]},
@@ -29,20 +31,37 @@ ADMIN_PAGE = r"""<!doctype html>
     body { margin: 0 auto; max-width: 1160px; padding: 32px 18px 64px; }
     h1 { margin-bottom: 4px; } .muted { color: #596579; }
     section, .user { background: white; border: 1px solid #d8dee8; border-radius: 10px; padding: 20px; margin: 18px 0; }
-    #app.admin-layout { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); grid-template-areas: "toolbar toolbar" "instances instances" "add users"; gap: 0 20px; align-items: start; }
+    #app.admin-layout { display: block; }
     #app.admin-layout.hidden { display: none; }
-    #toolbar { grid-area: toolbar; }
-    #instances-panel { grid-area: instances; }
+    #toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .admin-tabs { display: flex; gap: 8px; }
+    .admin-tabs button { background: transparent; color: #26364b; border: 1px solid #aab5c4; }
+    .admin-tabs button.active { background: #185abd; color: white; border-color: #185abd; }
+    .admin-view { margin-top: 20px; }
     #instance-layout { display: grid; grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
     .instance-card { border: 1px solid #d8dee8; border-radius: 8px; padding: 14px; margin: 12px 0; background: #fbfcfe; }
     .instance-card h3 { margin: 0 0 6px; }
     .instance-meta { overflow-wrap: anywhere; margin: 5px 0; }
-    #create-panel { grid-area: add; position: sticky; top: 16px; }
-    #users-panel { grid-area: users; min-width: 0; }
+    #users-layout { display: block; }
+    #create-panel { position: static; }
+    #create-panel > summary { cursor: pointer; font-size: 1.15rem; font-weight: 650; }
+    #create-panel[open] > summary { margin-bottom: 16px; }
+    .create-user-form { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(260px, 1fr); gap: 0 24px; align-items: start; }
+    .create-user-form > label, .create-user-form > input, .create-user-form > .instance-picker,
+    .create-user-form > .field-help { grid-column: 1; }
+    .create-user-form > #new-roles { grid-column: 2; grid-row: 1 / span 5; }
+    .create-user-form > #create-user, .create-user-form > #created-token { grid-column: 1 / -1; }
+    #enabled-users-panel { min-width: 0; }
     .revoked-list { margin: 18px 0; padding: 14px 18px; background: white; border: 1px solid #d8dee8; border-radius: 8px; }
     .revoked-list summary { cursor: pointer; font-weight: 600; }
     label { display: block; margin: 12px 0 6px; font-weight: 600; }
     input[type=text], input[type=password] { box-sizing: border-box; width: min(100%, 520px); padding: 10px; border: 1px solid #9aa6b7; border-radius: 6px; }
+    select { box-sizing: border-box; max-width: 100%; padding: 9px; border: 1px solid #9aa6b7; border-radius: 6px; background: white; }
+    .instance-picker { display: grid; gap: 8px; margin: 8px 0 14px; }
+    .instance-choice { display: flex; gap: 9px; align-items: flex-start; padding: 10px; margin: 0; border: 1px solid #d8dee8; border-radius: 7px; background: #fbfcfe; font-weight: 400; }
+    .instance-choice input { margin-top: 4px; }
+    .instance-choice span { min-width: 0; overflow-wrap: anywhere; }
+    .instance-choice small { display: block; color: #596579; font-weight: 400; }
     .role-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 12px; margin: 12px 0; }
     .role-group { border: 1px solid #d8dee8; border-radius: 8px; padding: 12px; background: #fbfcfe; }
     .role-group h4 { margin: 0 0 8px; color: #26364b; }
@@ -55,11 +74,14 @@ ADMIN_PAGE = r"""<!doctype html>
     .error { color: #a32626; white-space: pre-wrap; }
     .notice { margin: 12px 0; padding: 10px 12px; border: 1px solid #9bc99b; border-radius: 6px; color: #185b28; background: #edf7ed; }
     .notice.error { border-color: #d99; color: #a32626; background: #fff1f1; }
+    .field-help { margin: 5px 0 10px; font-size: .9rem; }
     .user h3 { margin: 0; }
     @media (max-width: 760px) {
       body { padding: 18px 12px 40px; }
-      #app.admin-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "instances" "users" "add"; }
       #instance-layout { grid-template-columns: minmax(0, 1fr); }
+      .create-user-form { grid-template-columns: minmax(0, 1fr); }
+      .create-user-form > #new-roles, .create-user-form > #create-user,
+      .create-user-form > #created-token { grid-column: 1; grid-row: auto; }
       #create-panel { position: static; }
       section, .user { padding: 15px; }
     }
@@ -75,19 +97,28 @@ ADMIN_PAGE = r"""<!doctype html>
     <div><button id="sign-in">Sign in</button></div><p id="login-error" class="error"></p>
   </section>
   <main id="app" class="hidden admin-layout">
-    <div id="toolbar"><button id="sign-out" class="secondary">Sign out</button></div>
-    <section id="instances-panel">
+    <div id="toolbar">
+      <nav class="admin-tabs" role="tablist" aria-label="Administration sections">
+        <button id="tab-connections" class="active" type="button" role="tab" aria-controls="instances-panel" aria-selected="true">Odoo connections</button>
+        <button id="tab-users" type="button" role="tab" aria-controls="users-panel" aria-selected="false">Users and access</button>
+      </nav>
+      <button id="sign-out" class="secondary">Sign out</button>
+    </div>
+    <section id="instances-panel" class="admin-view">
       <h2>Odoo instances</h2>
+      <p id="instance-message" class="notice hidden" role="status" aria-live="polite"></p>
       <p class="muted">Instance connections are stored outside the project source, in the private MCP data directory. API keys are never displayed after saving.</p>
       <p id="wildcard-warning" class="muted"></p>
       <div id="instance-layout">
         <div>
           <h3 id="instance-form-title">Add an instance</h3>
-          <label for="instance-name">Instance name</label><input id="instance-name" type="text" maxlength="64" autocomplete="off">
-          <label for="instance-url">Odoo base URL (HTTPS)</label><input id="instance-url" type="text" placeholder="https://odoo.example.com" autocomplete="url">
-          <label for="instance-api-type">Connection mode</label><select id="instance-api-type"><option value="json2">JSON-2 (Odoo 19+)</option><option value="xmlrpc">XML-RPC (Odoo 18)</option></select>
-          <label for="instance-database">Database (optional)</label><input id="instance-database" type="text" autocomplete="off">
-          <label for="instance-username">Odoo username/login (XML-RPC)</label><input id="instance-username" type="text" autocomplete="username">
+          <label for="instance-name">Instance key</label><input id="instance-name" type="text" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" placeholder="old-merchise-15" title="Use 1 to 64 letters, numbers, hyphens, or underscores; no spaces." autocomplete="off" required>
+          <p class="muted field-help">This key is used by MCP users to choose the connection. Use letters, numbers, hyphens, or underscores, with no spaces.</p>
+          <label for="instance-url">Odoo base URL (HTTPS)</label><input id="instance-url" type="text" placeholder="https://odoo.example.com" autocomplete="url" required>
+          <label for="instance-api-type">Connection mode</label><select id="instance-api-type"><option value="json2">JSON-2 (Odoo 19+)</option><option value="xmlrpc">XML-RPC (Odoo 15/18)</option></select>
+          <p id="api-mode-help" class="muted field-help"></p>
+          <label id="instance-database-label" for="instance-database">Database (optional)</label><input id="instance-database" type="text" autocomplete="off">
+          <div id="xmlrpc-fields"><label for="instance-username">Odoo username/login</label><input id="instance-username" type="text" autocomplete="username"></div>
           <label for="instance-api-key">Odoo API key</label><input id="instance-api-key" type="password" autocomplete="new-password">
           <p class="muted">When editing, leave the key blank to keep the saved key. Remove a saved key only after deactivating that instance.</p>
           <label class="muted"><input id="clear-instance-key" type="checkbox"> Remove the saved API key</label>
@@ -97,27 +128,40 @@ ADMIN_PAGE = r"""<!doctype html>
         <div><h3>Configured instances</h3><div id="instances-list"></div></div>
       </div>
     </section>
-    <aside id="create-panel" class="user">
-      <h2>Add a user</h2>
-      <label for="new-username">Username</label><input id="new-username" type="text" maxlength="64" autocomplete="off">
-      <label for="new-instances">Allowed Odoo instances</label><input id="new-instances" type="text" autocomplete="off">
-      <p class="muted" id="instance-help">Enter configured names separated by commas. Use * only when access to every instance is needed.</p>
-      <div id="new-roles" class="role-groups"></div>
-      <button id="create-user">Create user and generate token</button>
-      <div id="created-token" class="hidden"></div>
-    </aside>
-    <section id="users-panel"><h2>Enabled users</h2><p id="message" class="notice hidden" role="status" aria-live="polite"></p><div id="users"></div></section>
+    <section id="users-panel" class="admin-view hidden">
+      <h2>Users and access</h2>
+      <p class="muted field-help">Ticket access: <strong>viewer</strong> grants search/read; add <strong>support_ticket_editor</strong> to allow changes.</p>
+      <p id="user-message" class="notice hidden" role="status" aria-live="polite"></p>
+      <div id="users-layout">
+        <section id="enabled-users-panel"><h3>Enabled users</h3><div id="users"></div></section>
+        <details id="create-panel" class="user">
+          <summary>Add a user</summary>
+          <div class="create-user-form">
+          <label for="new-username">Username</label><input id="new-username" type="text" maxlength="64" autocomplete="off" required>
+          <label>Allowed Odoo instances</label><div id="new-instances" class="instance-picker"></div>
+          <p class="muted field-help">Choose one or more active connections. “All instances” also grants access to future connections.</p>
+          <div id="new-roles" class="role-groups"></div>
+          <button id="create-user">Create user and generate token</button>
+          <div id="created-token" class="hidden"></div>
+          </div>
+        </details>
+      </div>
+    </section>
   </main>
 <script>
 (() => {
   const tokenKey = 'odoo-mcp-admin-token';
   const login = document.querySelector('#login');
   const app = document.querySelector('#app');
-  const message = document.querySelector('#message');
   const labels = {
-    viewer: 'Consultar proyectos, tareas y páginas, incluidos archivados',
+    viewer: 'Consultar proyectos, tareas, tickets de soporte y páginas, incluidos archivados',
     task_editor: 'Crear y actualizar tareas, cambiar etapas y estados',
     task_archiver: 'Archivar y restaurar tareas',
+    support_ticket_editor: 'Editar asunto, descripción, prioridad, equipo, etapa y persona asignada; quitar asignación',
+    purchase_viewer: 'Consultar órdenes de compra, proveedores, líneas e importes',
+    purchase_manager: 'Crear RFQ, editar órdenes en borrador y administrar sus líneas',
+    purchase_approver: 'Confirmar RFQ y convertirlas en órdenes de compra',
+    vendor_bill_creator: 'Crear borradores de factura de proveedor desde líneas facturables de una orden',
     website_editor: 'Editar contenido de páginas',
     publisher: 'Publicar y despublicar páginas',
     blog_editor: 'Buscar, leer, crear y editar entradas del blog',
@@ -134,7 +178,8 @@ ADMIN_PAGE = r"""<!doctype html>
   let editingInstanceActive = true;
   let testedInstancePayload = null;
   const token = () => sessionStorage.getItem(tokenKey) || '';
-  const notify = (text, isError = false) => {
+  const notify = (text, isError = false, section = 'users') => {
+    const message = document.querySelector(section === 'instances' ? '#instance-message' : '#user-message');
     message.textContent = text;
     message.className = isError ? 'notice error' : 'notice';
   };
@@ -148,9 +193,57 @@ ADMIN_PAGE = r"""<!doctype html>
     return data;
   };
   const selectedRoles = container => [...container.querySelectorAll('input:checked')].map(input => input.value);
-  const parseInstances = input => {
-    const value = input.value.trim();
-    return value === '*' ? ['*'] : value.split(',').map(name => name.trim()).filter(Boolean);
+  const selectedInstanceNames = container => [...container.querySelectorAll('input:checked')].map(input => input.value);
+  const drawInstanceChoices = (container, selected = []) => {
+    container.replaceChildren();
+    const selectedNames = Array.isArray(selected) ? selected : [];
+    const names = [...new Set([...instanceNames, ...selectedNames.filter(name => name !== '*')])];
+    const addChoice = (name, title, description) => {
+      const label = document.createElement('label'); label.className = 'instance-choice';
+      const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = name;
+      checkbox.checked = selectedNames.includes(name);
+      checkbox.addEventListener('change', () => {
+        const checks = [...container.querySelectorAll('input[type=checkbox]')];
+        if (name === '*' && checkbox.checked) checks.filter(item => item !== checkbox).forEach(item => { item.checked = false; });
+        if (name !== '*' && checkbox.checked) {
+          const all = checks.find(item => item.value === '*'); if (all) all.checked = false;
+        }
+      });
+      const text = document.createElement('span'); text.append(document.createTextNode(title));
+      const detail = document.createElement('small'); detail.textContent = description; text.append(detail);
+      label.append(checkbox, text); container.append(label);
+    };
+    addChoice('*', 'All instances', 'Includes current and future connections');
+    if (!names.length) {
+      const empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = 'No configured Odoo instances yet.';
+      container.append(empty);
+    }
+    for (const name of names) {
+      const record = instanceRecords.find(item => item.name === name);
+      const availability = record ? (record.active ? record.base_url : 'Inactive · ' + record.base_url) : 'Not currently configured';
+      addChoice(name, name, availability);
+    }
+  };
+  const showAdminView = view => {
+    const connections = view === 'connections';
+    document.querySelector('#instances-panel').classList.toggle('hidden', !connections);
+    document.querySelector('#users-panel').classList.toggle('hidden', connections);
+    document.querySelector('#tab-connections').classList.toggle('active', connections);
+    document.querySelector('#tab-connections').setAttribute('aria-selected', String(connections));
+    document.querySelector('#tab-users').classList.toggle('active', !connections);
+    document.querySelector('#tab-users').setAttribute('aria-selected', String(!connections));
+  };
+  const updateConnectionFields = () => {
+    const xmlrpc = document.querySelector('#instance-api-type').value === 'xmlrpc';
+    document.querySelector('#xmlrpc-fields').classList.toggle('hidden', !xmlrpc);
+    const database = document.querySelector('#instance-database');
+    database.required = xmlrpc;
+    document.querySelector('#instance-database-label').textContent = xmlrpc ? 'Database (required for XML-RPC)' : 'Database (optional for JSON-2)';
+    document.querySelector('#instance-username').required = xmlrpc;
+    document.querySelector('#instance-api-key').required = !editingInstance;
+    document.querySelector('#api-mode-help').textContent = xmlrpc
+      ? 'Use XML-RPC for Odoo 15/18. Database and login are required; the API key is used as the password.'
+      : 'Use JSON-2 for Odoo 19+. The API key is required; specify a database only when the Odoo host needs it.';
   };
   const instancePayload = () => ({
     name: document.querySelector('#instance-name').value.trim(),
@@ -183,13 +276,17 @@ ADMIN_PAGE = r"""<!doctype html>
     document.querySelector('#instance-api-key').disabled = false;
     document.querySelector('#test-instance').disabled = false;
     document.querySelector('#cancel-instance').classList.add('hidden');
+    updateConnectionFields();
+    const instanceMessage = document.querySelector('#instance-message');
+    instanceMessage.textContent = ''; instanceMessage.className = 'notice hidden';
   };
   const loadInstances = async () => {
     const data = await api('/instances');
     instanceNames = data.instances;
     instanceRecords = data.records;
     wildcardUserCount = data.wildcard_users;
-    document.querySelector('#instance-help').textContent = 'Active instances: ' + (instanceNames.join(', ') || 'none') + '. Use * only when access to every current and future instance is intended.';
+    const newPicker = document.querySelector('#new-instances');
+    drawInstanceChoices(newPicker, selectedInstanceNames(newPicker));
     document.querySelector('#wildcard-warning').textContent = data.wildcard_users
       ? data.wildcard_users + ' active user(s) have * access and will also gain access to any new instance. Review their scopes after adding one.'
       : 'No active users currently have wildcard (*) access.';
@@ -216,6 +313,7 @@ ADMIN_PAGE = r"""<!doctype html>
         document.querySelector('#instance-api-key').disabled = false;
         document.querySelector('#test-instance').disabled = false;
         document.querySelector('#cancel-instance').classList.remove('hidden');
+        updateConnectionFields();
         invalidateInstanceTest();
       });
       const toggle = document.createElement('button'); toggle.textContent = item.active ? 'Deactivate' : 'Reactivate'; toggle.className = item.active ? 'danger' : '';
@@ -223,13 +321,16 @@ ADMIN_PAGE = r"""<!doctype html>
         if (item.active && !confirm('Deactivate ' + item.name + '? MCP requests to this instance will stop. Existing user access assignments are retained.')) return;
         try {
           await api('/instances/' + encodeURIComponent(item.name) + '/status', {method:'PUT', body:JSON.stringify({active:!item.active})});
-          await loadInstances(); await loadUsers(); notify(item.active ? 'Instance deactivated.' : 'Instance reactivated.');
-        } catch (error) { notify(error.message, true); }
+          await loadInstances(); await loadUsers(); notify(item.active ? 'Instance deactivated.' : 'Instance reactivated.', false, 'instances');
+        } catch (error) { notify(error.message, true, 'instances'); }
       });
       card.append(heading,url,database,apiType,credential,edit,toggle); list.append(card);
     }
   };
   document.querySelector('#cancel-instance').addEventListener('click', resetInstanceForm);
+  document.querySelector('#tab-connections').addEventListener('click', () => showAdminView('connections'));
+  document.querySelector('#tab-users').addEventListener('click', () => showAdminView('users'));
+  document.querySelector('#instance-api-type').addEventListener('change', () => { updateConnectionFields(); invalidateInstanceTest(); });
   document.querySelector('#clear-instance-key').addEventListener('change', event => {
     document.querySelector('#instance-api-key').disabled = event.target.checked;
     invalidateInstanceTest();
@@ -238,7 +339,7 @@ ADMIN_PAGE = r"""<!doctype html>
     if (event.target.checked && !editingInstanceActive) {
       testedInstancePayload = instancePayloadKey();
       document.querySelector('#save-instance').disabled = false;
-      notify('This inactive instance can have its saved key removed without a connection test.');
+      notify('This inactive instance can have its saved key removed without a connection test.', false, 'instances');
     }
   });
   for (const selector of ['#instance-name', '#instance-url', '#instance-api-type', '#instance-database', '#instance-username', '#instance-api-key']) {
@@ -246,20 +347,25 @@ ADMIN_PAGE = r"""<!doctype html>
   }
   document.querySelector('#test-instance').addEventListener('click', async () => {
     invalidateInstanceTest();
+    const requiredFields = ['#instance-name', '#instance-url', '#instance-database', '#instance-username', '#instance-api-key'];
+    for (const selector of requiredFields) {
+      const field = document.querySelector(selector);
+      if (field.required && !field.reportValidity()) return;
+    }
     const testedPayload = instancePayloadKey();
     try {
       const result = await api('/instances/test', {method:'POST', body:JSON.stringify(instancePayload())});
       if (testedPayload !== instancePayloadKey()) throw new Error('Settings changed during the test. Test again before saving.');
       testedInstancePayload = testedPayload;
       document.querySelector('#save-instance').disabled = false;
-      notify(result.message);
-    } catch (error) { notify(error.message, true); }
+      notify(result.message, false, 'instances');
+    } catch (error) { notify(error.message, true, 'instances'); }
   });
   document.querySelector('#save-instance').addEventListener('click', async () => {
     const payload = instancePayload();
     if (testedInstancePayload !== JSON.stringify(payload)) {
       invalidateInstanceTest();
-      notify('Test the current connection settings successfully before saving.', true);
+      notify('Test the current connection settings successfully before saving.', true, 'instances');
       return;
     }
     if (payload.clear_api_key && !confirm('Remove the saved API key from this inactive instance?')) return;
@@ -271,8 +377,8 @@ ADMIN_PAGE = r"""<!doctype html>
       } else {
         await api('/instances', {method:'POST', body:JSON.stringify(payload)});
       }
-      resetInstanceForm(); await loadInstances(); await loadUsers(); notify('Instance saved.');
-    } catch (error) { notify(error.message, true); }
+      resetInstanceForm(); await loadInstances(); await loadUsers(); notify('Instance saved.', false, 'instances');
+    } catch (error) { notify(error.message, true, 'instances'); }
   });
   const drawRoleBoxes = (container, chosen = []) => {
     container.replaceChildren();
@@ -306,11 +412,16 @@ ADMIN_PAGE = r"""<!doctype html>
       });
       card.append(heading, roleBox, save);
       const instanceLabel = document.createElement('label'); instanceLabel.textContent = 'Allowed Odoo instances';
-      const instanceInput = document.createElement('input'); instanceInput.type = 'text';
-      instanceInput.value = (user.instances || ['*']).join(', '); instanceInput.autocomplete = 'off';
+      const instanceInput = document.createElement('div'); instanceInput.className = 'instance-picker';
+      drawInstanceChoices(instanceInput, user.instances || ['*']);
       const instanceSave = document.createElement('button'); instanceSave.textContent = 'Save instance access'; instanceSave.className = 'secondary';
       instanceSave.addEventListener('click', async () => {
-        try { await api('/users/' + encodeURIComponent(user.username) + '/instances', { method: 'PUT', body: JSON.stringify({instances: parseInstances(instanceInput)}) }); await loadUsers(); notify('Instance access saved.'); }
+        try {
+          const instances = selectedInstanceNames(instanceInput);
+          if (!instances.length) throw new Error('Select at least one Odoo instance or All instances.');
+          await api('/users/' + encodeURIComponent(user.username) + '/instances', { method: 'PUT', body: JSON.stringify({instances}) });
+          await loadUsers(); notify('Instance access saved.');
+        }
         catch (error) { notify(error.message, true); }
       });
       card.append(instanceLabel, instanceInput, instanceSave);
@@ -347,6 +458,8 @@ ADMIN_PAGE = r"""<!doctype html>
     try {
       const [data] = await Promise.all([api('/roles'), loadInstances()]);
       roleGroups = data.groups;
+      updateConnectionFields();
+      showAdminView('connections');
       drawRoleBoxes(document.querySelector('#new-roles'), ['viewer']);
       await loadUsers(); login.classList.add('hidden'); app.classList.remove('hidden');
       document.querySelector('#login-error').textContent = '';
@@ -366,7 +479,8 @@ ADMIN_PAGE = r"""<!doctype html>
     const chosen = selectedRoles(document.querySelector('#new-roles'));
     const output = document.querySelector('#created-token'); output.replaceChildren(); output.classList.add('hidden');
     try {
-      const instances = parseInstances(document.querySelector('#new-instances'));
+      const instances = selectedInstanceNames(document.querySelector('#new-instances'));
+      if (!instances.length) throw new Error('Select at least one Odoo instance or All instances.');
       const data = await api('/users', { method: 'POST', body: JSON.stringify({username, roles: chosen, instances}) });
       const note = document.createElement('p'); note.textContent = 'Copy this token now. It will not be shown again.';
       const value = document.createElement('p'); value.className = 'token'; value.textContent = data.token;

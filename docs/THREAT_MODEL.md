@@ -5,8 +5,9 @@ This is a working threat model for the prototype, not a security assessment or c
 ## Assets
 
 - Odoo API keys and MCP bearer tokens.
-- Project, task, customer, and website content returned by tools.
-- Integrity of project records and website pages, including publication state.
+- Project, task, support ticket, customer, and website content returned by tools.
+- Purchase order and supplier bill data returned by purchasing tools.
+- Integrity of project records, support tickets, purchase orders, supplier bills, and website pages, including publication state.
 - User-to-role assignments and instance configuration.
 - Availability and integrity of the service and its SQLite user database.
 
@@ -28,6 +29,9 @@ This is a working threat model for the prototype, not a security assessment or c
 | Unauthorized Odoo access | Server-side API key, HTTPS-only configured URL, Odoo ACLs/record rules, authenticated credential test on instance setup | Per-customer technical identities and credential rotation strategy |
 | Accidental page publication or overwrite | Separate editor and publisher roles; publish/unpublish are explicit tools | Add change preview, confirmation workflow, and recovery/versioning guidance |
 | Accidental task or project lifecycle change | Task archiving has a separate role; task states are allowlisted; archive tools only write `active`; project lifecycle actions are limited to project managers | Add change preview and audit events for lifecycle changes |
+| Unauthorized or accidental support-ticket changes | Ticket writes use a separate role and a fixed field allowlist; Odoo ACLs and record rules still apply | Verify ticket field availability, role boundaries, and team/stage behavior on each supported Odoo deployment |
+| Unauthorized or accidental purchasing changes | RFQ creation/edit, order confirmation, and draft vendor-bill generation use separate roles; edits are restricted to draft/sent RFQs and Odoo ACLs still apply | Verify tool roles, purchase module fields, receipt/invoice behavior, and technical-user ACLs on Odoo 15, 18, and 19 |
+| Cross-company reads or writes | Company-scoped tool calls resolve an allowed company and set `allowed_company_ids` to that company; multi-company requests without a choice fail closed | Verify each installed module's record rules and shared-record behavior; the Odoo technical user must have access to the intended companies |
 | Accidental blog publication or cross-site editing | Separate blog editor and publisher roles, explicit website ID, post field allowlists, and forced-unpublished creation | Verify site isolation and publish permissions against Odoo 18 and 19 staging instances |
 | Overwriting another blog language or uploading unsafe cover data | Translation writes carry a language context; enabled website languages are checked; cover data is signature-checked, size-limited, and attached as public content only to the scoped post | Exercise language isolation against both live Odoo versions; verify anonymous access and sanitization for uploaded media |
 | Secret exposure in repository or image | Example templates; local files are ignored and excluded from Docker context | Run full-history secret scanning before publication and automate secret scanning in CI |

@@ -11,6 +11,7 @@ Build a standalone service that exposes a small set of useful Odoo operations to
 ## Scope and constraints
 
 - Odoo 19 Community with Project and Website available.
+- Purchasing tools planned for Odoo 15, 18, and 19, subject to live verification on each deployment.
 - Separate MCP service, deployable with Docker Compose.
 - Streamable HTTP for remote-capable MCP clients; local deployment remains bound to loopback by default.
 - Named Odoo targets, HTTPS calls, explicit tool parameters, and no generic database interface.
@@ -31,6 +32,9 @@ Build a standalone service that exposes a small set of useful Odoo operations to
 ## Delivery so far
 
 - Implemented project, task, and website-page read/write tools.
+- Added Helpdesk ticket search/read tools and role-restricted updates for subject, description, priority, team, stage, and assignee; compatibility is routed through XML-RPC for Odoo 15/18 and JSON-2 for Odoo 19 when the `helpdesk.ticket` model is installed.
+- Added role-separated purchase-order tools to create draft RFQs, edit draft/sent RFQs and lines, confirm orders, and create draft supplier bills from invoiceable confirmed orders. The implementation is documented but has not yet been live-verified across Odoo 15/18/19.
+- Added explicit company selection to business tools: single-company access is inferred, multiple-company access requires an exact company name, and the chosen company is applied through Odoo context. This behavior still needs live verification for each installed module and its record rules.
 - Added role-based MCP users and a local administration page for user roles and Odoo connections.
 - Added per-user allowlists for configured Odoo instances, including management through the local admin page.
 - Added Docker Compose packaging and separated the developer's private connection files from the project directory.

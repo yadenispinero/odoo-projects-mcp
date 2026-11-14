@@ -4,7 +4,7 @@
 
 1. **MCP client:** an AI application or workflow runner sends a named tool request over Streamable HTTP and authenticates with its own bearer token.
 2. **MCP service:** validates the token, maps it to roles, checks tool authorization, validates inputs, and selects an explicitly named Odoo target.
-3. **Odoo connector:** sends a fixed model/method call to the configured JSON-2 endpoint (Odoo 19+) or XML-RPC endpoint (Odoo 18) over HTTPS, using a server-side API key.
+3. **Odoo connector:** sends a fixed model/method call to the configured JSON-2 endpoint (Odoo 19+) or XML-RPC endpoint (Odoo 15/18) over HTTPS, using a server-side API key.
 4. **Odoo:** applies its own access rights and record rules. This is the final data authorization layer.
 5. **Access administration:** a local web page manages users and roles in SQLite and Odoo connections in a private JSON store. It is intended for local administration only.
 
@@ -24,7 +24,7 @@ flowchart LR
   end
   subgraph OdooZone[Customer Odoo environment]
     API[Odoo JSON-2 API]
-    DATA[Projects, tasks, and website]
+    DATA[Projects, tasks, support tickets, purchasing, and website]
   end
   CLIENT -->|TLS required for remote deployment| ENTRY --> AUTH --> TOOLS
   TOOLS -->|HTTPS + technical account| API --> DATA
@@ -34,9 +34,11 @@ flowchart LR
 
 The service receives and returns Odoo business data. If a client forwards tool results to a hosted AI provider, that provider becomes part of the deployment's data flow and must be assessed separately.
 
+Each business tool accepts an optional exact `company` name. Before the operation, the connector resolves it against `res.company` records visible to the configured Odoo user and sends `allowed_company_ids: [selected_id]` in the Odoo context. If exactly one company is available, it is selected automatically; if multiple are available and no name is supplied, the operation fails before accessing its target record. `list_companies` provides the available names. Odoo still controls access through its ACLs and record rules, and records configured as shared across companies may remain available. The Odoo multi-company guidance describes `allowed_company_ids` as the active company set and notes that shared records can be company-independent.
+
 ## Tool contract
 
-Tools are specific to projects, tasks, website pages, and blog posts. Each tool owns its model, method, fields, input validation, and role requirement. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page and blog publication and unpublication are separate tools with separate permissions. Blog operations require an explicit website ID and scope reads and mutations to that website. Blog translations write with an explicit `lang` context, and only languages enabled on that website are accepted. Cover uploads are limited to public PNG, JPEG, or WebP attachments up to 5 MB and preserve existing cover properties. `blog_scheduler` can schedule publication at least ten minutes in the future. Until that date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it. Scheduling also sends Odoo's new-post notification to blog followers immediately.
+Tools are specific to projects, tasks, support tickets, purchasing, website pages, and blog posts. Each tool owns its model, method, fields, input validation, and role requirement. Purchase operations use `purchase.order` and `purchase.order.line`: users with `purchase_manager` can create draft RFQs and edit only draft/sent RFQs; `purchase_approver` separately confirms them; `vendor_bill_creator` can ask Odoo to create a draft supplier bill only from a confirmed order with invoiceable quantity. The bill operation calls Odoo's `action_create_invoice`; posting a bill is not exposed. XML-RPC uses the Odoo 15/18 field names while JSON-2 uses the Odoo 19 names. These paths need live verification against each target database, installed modules, and technical-user ACLs. Support-ticket tools use `helpdesk.ticket` and allow only ticket search/read plus updates to subject, description, priority, team, stage, and assignee, including clearing the assignee; they require an installed module that provides the model. There is no caller-supplied model/method pair, arbitrary SQL, or arbitrary Odoo domain in the public tool interface. Page and blog publication and unpublication are separate tools with separate permissions. Blog operations require an explicit website ID and scope reads and mutations to that website. Blog translations write with an explicit `lang` context, and only languages enabled on that website are accepted. Cover uploads are limited to public PNG, JPEG, or WebP attachments up to 5 MB and preserve existing cover properties. `blog_scheduler` can schedule publication at least ten minutes in the future. Until that date, Odoo hides a post only from the blog list; its URL, `/feed`, and `/sitemap.xml` already show it. Scheduling also sends Odoo's new-post notification to blog followers immediately.
 
 The Odoo connector reads the connection user's context with `res.users.context_get` on the first model call and uses its `lang` as the default context for all calls in both protocols; explicit `context.lang` takes precedence. JSON-2 does not automatically use the user's language when the `context` argument is omitted: its API context is optional and defaults to an empty context, so it needs this same explicit language handling as XML-RPC. See [Odoo's JSON-2 API reference](https://www.odoo.com/documentation/19.0/developer/reference/external_api.html).
 

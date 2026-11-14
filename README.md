@@ -1,6 +1,6 @@
 # Odoo Projects MCP
 
-An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, website pages, and blog posts.
+An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, support tickets, purchase orders, vendor bills, website pages, and blog posts.
 
 > **Portfolio project:** demonstrates integration planning, API discovery, scoped tool design, role-based access, Docker deployment, and security trade-off documentation. It is a prototype and has not been independently audited or certified for regulatory compliance.
 
@@ -21,9 +21,13 @@ flowchart LR
 
 The operator selects a configured Odoo instance on each tool call. The server does not expose arbitrary SQL or a generic model-call tool. Odoo API credentials stay on the server.
 
+Business tools accept an optional exact `company` name. The server lists companies available to the configured Odoo user through `list_companies`, selects the sole available company automatically, and requires an explicit choice when the user can access more than one. It scopes calls through Odoo's `allowed_company_ids` context. Company-independent shared records may still be visible according to Odoo's own rules.
+
 ## Current capabilities
 
 - Search and read projects and tasks.
+- Search and read Helpdesk tickets; update ticket subject, description, priority, team, stage, and assignee with a dedicated role.
+- Search and read RFQs and purchase orders; create draft RFQs, edit their header and lines, and confirm them with separate roles. Create draft vendor bills from confirmed orders when Odoo reports invoiceable quantities; posting bills remains an Odoo-side action.
 - Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
 - List websites and blogs; search, read, create, and edit blog posts with explicit website targeting. `create_blog_post` and `update_blog_post` write in the Odoo connection user's language, which must be the website's primary language. To translate a post, create it in the primary language, call `get_blog_post_translation_terms`, then send the returned term map as `content_terms` to `set_blog_post_translation`; this updates HTML terms without replacing the primary content. Editors can attach public cover images; schedulers can set a future publication time. Blog creation always starts unpublished, and publish/unpublish use separate tools and roles.
@@ -35,7 +39,12 @@ The operator selects a configured Odoo instance on each tool call. The server do
 - Scheduling also sends Odoo's new-post notification to blog followers immediately.
 - Authenticate MCP users with bearer tokens and grant permissions through named roles.
 - Manage Odoo connections, users, roles, token rotation, and revocation in a local admin page.
-- Connect to Odoo 19+ through JSON-2 or Odoo 18 through XML-RPC over HTTPS.
+- List Odoo companies available to the technical user and apply an explicit company context to business tools.
+- Connect to Odoo 19+ through JSON-2 or Odoo 15/18 through XML-RPC over HTTPS.
+
+Support-ticket tools target the `helpdesk.ticket` model and require a Helpdesk module that provides that model on the Odoo database, plus appropriate Odoo access rights for the technical user. Helpdesk is not part of every Odoo Community installation; availability depends on the installed edition/modules.
+
+Purchase tools use Odoo's standard `purchase.order` and `purchase.order.line` models. They are implemented for the configured XML-RPC path (Odoo 15/18) and JSON-2 path (Odoo 19), but still need live verification on each supported deployment. The bill operation calls Odoo's purchase invoicing action and returns the resulting draft supplier bill (`account.move` with `move_type=in_invoice`); it does not post the bill.
 
 
 ## Marked text format
@@ -92,7 +101,7 @@ Requirements: Docker Compose and an Odoo instance with an enabled external API.
 
 The MCP endpoint is `http://127.0.0.1:8000/mcp`; the local admin page is `http://127.0.0.1:8001/admin`. The admin page has its own port (`MCP_ADMIN_PORT`), which Compose always publishes on `127.0.0.1` only. Setting `MCP_BIND=0.0.0.0` publishes `/mcp` to the local network over plain HTTP, so bearer tokens are not encrypted; do this only on a trusted network that is not reachable from the internet. The configured `owner` token is used to sign in. User tokens are shown once when created or rotated. Add later Odoo targets from the **Odoo instances** section; a successful authenticated read is required before creating or editing a connection, and the server repeats the check so a direct API request cannot bypass it. Removing a key is allowed only after deactivating that instance; an instance without a key cannot be reactivated. Local config, instance credentials, SQLite state, and `.env` files are outside Git and the Docker build context.
 
-Choose **JSON-2** for Odoo 19+ or **XML-RPC** for Odoo 18 connections in the admin page. XML-RPC needs the database name, Odoo username/login, and an API key (used as the API password); JSON-2 uses an API key and an optional database name. Odoo 18's external API availability depends on the Odoo subscription plan.
+Choose **JSON-2** for Odoo 19+ or **XML-RPC** for Odoo 15/18 connections in the admin page. XML-RPC needs the database name, Odoo username/login, and an API key (used as the API password); JSON-2 uses an API key and an optional database name. External API availability can depend on the Odoo hosting plan. Odoo 19 introduced JSON-2; Odoo 15 and 18 use the XML-RPC integration path here.
 
 When upgrading an existing SQLite user database, the schema adds the instance allowlist while preserving existing access as `*`. After starting the upgraded service, use the admin page to replace `*` with explicit instance names for each account before configuring additional Odoo targets.
 
@@ -102,18 +111,23 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 
 | Role | Tools |
 | --- | --- |
-| `viewer` | Connection check and project, task, and page search/read; archived records can be included in searches |
+| `viewer` | Connection check and project, task, support ticket, and page search/read; archived records can be included in searches |
 | `task_editor` | Create and update tasks; list project stages and change task stage/state |
 | `task_archiver` | Archive and restore tasks |
+| `support_ticket_editor` | Update ticket subject, description, priority, team, stage, and assignee; `clear_assignee` removes the assignee |
 | `project_manager` | Search, read, create, update, archive, and restore projects; list task stages |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
 | `blog_editor` | List websites and blogs; rename blogs per language; search, read, create, edit, and translate blog posts |
 | `blog_publisher` | List websites and blogs; search, read, publish, and unpublish blog posts |
 | `blog_scheduler` | Schedule blog posts for a future date |
+| `purchase_viewer` | Search and read RFQs, purchase orders, and their lines |
+| `purchase_manager` | Create draft RFQs and edit draft/sent RFQ headers and lines |
+| `purchase_approver` | Confirm draft/sent RFQs into purchase orders |
+| `vendor_bill_creator` | Create draft supplier bills from confirmed orders with invoiceable quantities |
 | `administrator` | All currently registered tools and user administration |
 
-Roles can be combined for a user. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
+Roles can be combined for a user. The `viewer` role can search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
 
 Archiving a project also archives all its tasks. Restoring the project restores all its tasks too, including tasks that were already archived individually before the project was archived.
 

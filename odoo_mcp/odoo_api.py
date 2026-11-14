@@ -13,12 +13,18 @@ class OdooApiError(RuntimeError):
 
 
 class OdooJson2:
-    def __init__(self, instance: OdooInstance, client: httpx.AsyncClient | None = None):
+    def __init__(self, instance: OdooInstance, client: httpx.AsyncClient | None = None,
+                 company: str | None = None, enforce_company: bool = True):
         self.instance = instance
         self.client = client or httpx.AsyncClient(timeout=20.0, follow_redirects=False)
         self._owns_client = client is None
         self._default_lang: str | None = None
         self._default_lang_loaded = False
+        self.requested_company = company.strip() if isinstance(company, str) and company.strip() else None
+        self.enforce_company = enforce_company
+        self.company_id: int | None = None
+        self._company_loaded = False
+        self._company_loading = False
 
     async def close(self) -> None:
         if self._owns_client:
@@ -49,9 +55,14 @@ class OdooJson2:
         payload = dict(payload)
         if (model, method) != ("res.users", "context_get"):
             lang = await self._get_default_lang()
+            if self.enforce_company and not self._company_loading:
+                await self._ensure_company()
             context = dict(payload.get("context") or {})
             if lang:
                 context.setdefault("lang", lang)
+            if self.company_id is not None:
+                # Never let a tool-supplied context widen the company scope.
+                context["allowed_company_ids"] = [self.company_id]
             if context:
                 payload["context"] = context
         if self.instance.api_type == "xmlrpc":
@@ -59,6 +70,35 @@ class OdooJson2:
                 raise OdooApiError("XML-RPC requires a database and username/login")
             return await self._xmlrpc_call(model, method, payload)
         return await self._json2_request(model, method, payload)
+
+    async def _ensure_company(self) -> None:
+        if self._company_loaded or self._company_loading:
+            return
+        self._company_loading = True
+        try:
+            domain = [["name", "=", self.requested_company]] if self.requested_company else []
+            companies = await self.search_read(
+                "res.company", domain, ["id", "name"], 1000, "name asc, id asc"
+            )
+            if self.requested_company:
+                if len(companies) != 1:
+                    raise OdooApiError(
+                        f"Company {self.requested_company!r} is unavailable or ambiguous for this Odoo user"
+                    )
+                selected = companies[0]
+            elif len(companies) == 1:
+                selected = companies[0]
+            elif not companies:
+                raise OdooApiError("The Odoo user cannot access any company")
+            else:
+                choices = ", ".join(str(item.get("name", item.get("id"))) for item in companies)
+                raise OdooApiError(
+                    f"This Odoo user can access multiple companies ({choices}); pass company explicitly"
+                )
+            self.company_id = selected["id"]
+            self._company_loaded = True
+        finally:
+            self._company_loading = False
 
     async def _get_default_lang(self) -> str | None:
         if self._default_lang_loaded:
@@ -105,7 +145,7 @@ class OdooJson2:
         return uid
 
     async def _xmlrpc_call(self, model: str, method: str, payload: dict[str, Any]) -> Any:
-        """Call Odoo 18's documented XML-RPC external API; the API key is the password."""
+        """Call Odoo's XML-RPC external API; the API key is used as the password."""
         try:
             uid = await self._xmlrpc_authenticate()
             args, kwargs = self._xmlrpc_arguments(method, payload)
@@ -134,7 +174,8 @@ class OdooJson2:
     @staticmethod
     def _xmlrpc_arguments(method: str, payload: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
         if method == "search_read":
-            kwargs = {key: payload[key] for key in ("fields", "limit", "order", "context") if key in payload}
+            kwargs = {key: payload[key] for key in ("fields", "limit", "offset", "order", "context")
+                      if key in payload}
             return [payload.get("domain", [])], kwargs
         if method == "read":
             kwargs = {"fields": payload.get("fields", [])}
@@ -148,6 +189,12 @@ class OdooJson2:
         if method == "write":
             kwargs = {"context": payload["context"]} if "context" in payload else {}
             return [payload["ids"], payload["vals"]], kwargs
+        if method in {"button_confirm", "action_create_invoice"}:
+            kwargs = {"context": payload["context"]} if "context" in payload else {}
+            return [payload["ids"]], kwargs
+        if method == "map_tax":
+            kwargs = {"context": payload["context"]} if "context" in payload else {}
+            return [payload["taxes"]], kwargs
         if method == "get_field_translations":
             kwargs = {"context": payload["context"]} if "context" in payload else {}
             return [payload["ids"], payload["field_name"], payload.get("langs")], kwargs
@@ -161,11 +208,13 @@ class OdooJson2:
 
     async def search_read(
         self, model: str, domain: list, fields: list[str], limit: int, order: str = "id desc",
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None, offset: int = 0,
     ) -> list[dict[str, Any]]:
-        payload = {
+        payload: dict[str, Any] = {
             "domain": domain, "fields": fields, "limit": limit, "order": order,
         }
+        if offset:
+            payload["offset"] = offset
         if context is not None:
             payload["context"] = context
         result = await self.call(model, "search_read", payload)

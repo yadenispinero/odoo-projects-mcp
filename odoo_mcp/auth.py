@@ -20,6 +20,9 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
             "get_project",
             "search_tasks",
             "get_task",
+            "search_support_tickets",
+            "get_support_ticket",
+            "get_support_ticket_messages",
             "search_pages",
             "get_page",
         }
@@ -28,6 +31,7 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
         "create_task", "update_task", "list_task_stages", "set_task_stage", "set_task_state",
     }),
     "task_archiver": frozenset({"archive_task", "unarchive_task"}),
+    "support_ticket_editor": frozenset({"update_support_ticket"}),
     "website_editor": frozenset({"update_page_content"}),
     "publisher": frozenset({"publish_page", "unpublish_page"}),
     "blog_editor": frozenset({
@@ -40,10 +44,26 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
         "publish_blog_post", "unpublish_blog_post",
     }),
     "blog_scheduler": frozenset({"schedule_blog_post"}),
+    "purchase_viewer": frozenset({"search_purchase_orders", "get_purchase_order", "search_purchase_representatives"}),
+    "purchase_manager": frozenset({
+        "search_purchase_orders", "get_purchase_order", "search_purchase_representatives", "create_purchase_order",
+        "update_purchase_order", "add_purchase_order_line", "update_purchase_order_line",
+        "remove_purchase_order_line",
+    }),
+    "purchase_approver": frozenset({
+        "search_purchase_orders", "get_purchase_order", "search_purchase_representatives", "confirm_purchase_order",
+    }),
+    "vendor_bill_creator": frozenset({
+        "search_purchase_orders", "get_purchase_order", "search_purchase_representatives", "create_vendor_bill_from_purchase_order",
+    }),
 }
+# Company discovery is read-only and needed so callers can select an allowed
+# company before invoking any company-scoped tool.
+for _role_name, _role_tools in tuple(ROLE_TOOLS.items()):
+    ROLE_TOOLS[_role_name] = _role_tools | frozenset({"list_companies"})
 ROLE_TOOLS["project_manager"] = frozenset(
     {"search_projects", "get_project", "create_project", "update_project", "archive_project",
-     "unarchive_project", "list_task_stages"}
+     "unarchive_project", "list_task_stages", "list_companies"}
 )
 ROLE_TOOLS["administrator"] = frozenset().union(*ROLE_TOOLS.values())
 

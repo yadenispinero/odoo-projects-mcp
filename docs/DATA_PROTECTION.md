@@ -4,12 +4,12 @@ This document describes design questions for deployment owners. It is not legal 
 
 ## Data flow
 
-The MCP service can read and modify project names, task descriptions, assignments, deadlines, customer references, website metadata, and page content. These fields may contain personal data depending on how the Odoo instance is used. Tool results leave Odoo and are returned to the configured MCP client; the client may send them to an AI provider or retain them in workflow history.
+The MCP service can read and modify project names, task descriptions, assignments, deadlines, support ticket subjects and descriptions, purchase order and supplier bill data, customer references, website metadata, and page content. These fields may contain personal or commercially sensitive data depending on how the Odoo instance is used. Tool results leave Odoo and are returned to the configured MCP client; the client may send them to an AI provider or retain them in workflow history.
 
 ## Questions to answer for each deployment
 
 - Who determines the purpose and means of processing, and what are the controller/processor roles?
-- What personal data can appear in project, task, customer, and page fields?
+- What personal or commercially sensitive data can appear in project, task, support ticket, purchase, supplier, customer, and page fields?
 - Which lawful basis and notices apply to each purpose?
 - Which client and AI provider receive tool results, where are they hosted, and what are their retention and training settings?
 - What data is necessary for each tool, and can fields or outputs be reduced further?

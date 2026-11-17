@@ -30,6 +30,7 @@ Business tools accept an optional exact `company` name. The server lists compani
 - Search Discuss channels and read their messages for a requested date range.
 - Search and read CRM opportunities; create, edit, stage, archive, and restore opportunities with the `crm_editor` role. Editable fields include contact details, revenue, probability, priority, tags, owner, team, source, campaign, deadline, and description.
 - Search and read contacts and companies; create and edit their contact, address, parent, country, and tag fields; archive or reactivate records with partner roles.
+- Search, create, edit, archive, and reactivate Odoo mail templates; read and update template name, subject, and HTML body translations with a dedicated translation role. Base template edits use the Odoo connection user's default language; translation operations require an active Odoo language code.
 - Search and read RFQs and purchase orders; create draft RFQs, edit their header and lines, and confirm them with separate roles. Create draft vendor bills from confirmed orders when Odoo reports invoiceable quantities; posting bills remains an Odoo-side action.
 - Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
@@ -121,6 +122,9 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `crm_editor` | Create and edit CRM opportunities, change stage, archive, and restore them |
 | `partner_viewer` | Search and read contacts and companies, including archived records when requested |
 | `partner_editor` | Search, read, create, edit, archive, and reactivate contacts and companies |
+| `mail_template_viewer` | Search and read mail templates and list applicable Odoo models |
+| `mail_template_editor` | Search, read, create, edit, archive, and reactivate mail templates |
+| `mail_template_translator` | Read and update translated template name, subject, and HTML body for an active language |
 | `project_manager` | Search, read, create, update, archive, and restore projects; list task stages |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
@@ -133,7 +137,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `vendor_bill_creator` | Create draft supplier bills from confirmed orders with invoiceable quantities |
 | `administrator` | All currently registered tools and user administration |
 
-Roles can be combined for a user. `viewer` can find Discuss channels and read channel messages for an inclusive date range, and can search/read CRM opportunities, including archived ones when requested. `crm_editor` adds create, field edit, stage-change, archive, and restore operations. `partner_viewer` provides read access to contacts and companies; `partner_editor` adds creation, edits, archiving, and reactivation. Viewer can also search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
+Roles can be combined for a user. `viewer` can find Discuss channels and read channel messages for an inclusive date range, and can search/read CRM opportunities, including archived ones when requested. `crm_editor` adds create, field edit, stage-change, archive, and restore operations. `partner_viewer` provides read access to contacts and companies; `partner_editor` adds creation, edits, archiving, and reactivation. Mail template access is separately granted by the three `mail_template_*` roles; translation tools only write the translatable name, subject, and body fields in the explicitly selected active language. Viewer can also search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
 
 Archiving a project also archives all its tasks. Restoring the project restores all its tasks too, including tasks that were already archived individually before the project was archived.
 

@@ -662,6 +662,176 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
+    async def list_mail_template_models(instance: str, ctx: Context, query: str = "",
+                                       limit: int = 100,
+                                       company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """List Odoo model IDs and technical names to select a mail template's model_id."""
+        require_tool_access("list_mail_template_models", instance)
+        domain = [["model", "ilike", query]] if query else []
+        api = target(instance, company)
+        try:
+            return await api.search_read("ir.model", domain, ["id", "model", "name"], _limit(limit), "model asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def search_mail_templates(instance: str, ctx: Context, query: str = "",
+                                    model_id: int | None = None, include_archived: bool = False,
+                                    limit: int = 20, offset: int = 0,
+                                    company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """Search mail templates by name or subject, optionally scoped to an Odoo model."""
+        require_tool_access("search_mail_templates", instance)
+        domain: list = []
+        if query:
+            domain.extend(["|", ["name", "ilike", query], ["subject", "ilike", query]])
+        if model_id is not None:
+            domain.append(["model_id", "=", _positive_id(model_id, "model_id")])
+        api = target(instance, company)
+        try:
+            return await api.search_read("mail.template", domain,
+                ["id", "name", "model_id", "subject", "email_from", "active"], _limit(limit),
+                offset=_offset(offset), context={"active_test": not include_archived})
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_mail_template(instance: str, template_id: int, ctx: Context,
+                                company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, Any]:
+        """Read a mail template in the connection user's default Odoo language."""
+        require_tool_access("get_mail_template", instance)
+        api = target(instance, company)
+        try:
+            return await api.read("mail.template", _positive_id(template_id, "template_id"),
+                ["id", "name", "model_id", "subject", "email_from", "email_to", "email_cc",
+                 "reply_to", "body_html", "lang", "auto_delete", "use_default_to", "active"])
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_mail_template(instance: str, name: str, model_id: int, subject: str,
+                                  body_html: str, ctx: Context, email_from: str | None = None,
+                                  email_to: str | None = None, email_cc: str | None = None,
+                                  reply_to: str | None = None, lang: str | None = None,
+                                  auto_delete: bool | None = None, use_default_to: bool | None = None,
+                                  company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
+        """Create an active mail template for a selected Odoo model."""
+        require_tool_access("create_mail_template", instance)
+        if not name.strip(): raise ValueError("name must not be empty")
+        if not subject.strip(): raise ValueError("subject must not be empty")
+        model_id = _positive_id(model_id, "model_id")
+        values: dict[str, Any] = {"name": name.strip(), "model_id": model_id,
+                                  "subject": subject, "body_html": body_html, "active": True}
+        for field, value in (("email_from", email_from), ("email_to", email_to),
+                             ("email_cc", email_cc), ("reply_to", reply_to), ("lang", lang)):
+            if value is not None: values[field] = value
+        if auto_delete is not None: values["auto_delete"] = auto_delete
+        if use_default_to is not None: values["use_default_to"] = use_default_to
+        api = target(instance, company)
+        try:
+            await api.read("ir.model", model_id, ["id"])
+            return {"template_id": await api.create("mail.template", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_mail_template(instance: str, template_id: int, ctx: Context,
+                                   name: str | None = None, model_id: int | None = None,
+                                   subject: str | None = None, body_html: str | None = None,
+                                   email_from: str | None = None, email_to: str | None = None,
+                                   email_cc: str | None = None, reply_to: str | None = None,
+                                   lang: str | None = None, auto_delete: bool | None = None,
+                                   use_default_to: bool | None = None,
+                                   company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Update supplied fields in the connection user's default language; use the translation tool for other languages."""
+        require_tool_access("update_mail_template", instance)
+        template_id = _positive_id(template_id, "template_id")
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip(): raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        if model_id is not None: values["model_id"] = _positive_id(model_id, "model_id")
+        if subject is not None: values["subject"] = subject
+        for field, value in (("body_html", body_html), ("email_from", email_from),
+                             ("email_to", email_to), ("email_cc", email_cc),
+                             ("reply_to", reply_to), ("lang", lang)):
+            if value is not None: values[field] = value
+        if auto_delete is not None: values["auto_delete"] = auto_delete
+        if use_default_to is not None: values["use_default_to"] = use_default_to
+        if not values: raise ValueError("Provide at least one mail template field to update")
+        api = target(instance, company)
+        try:
+            if model_id is not None: await api.read("ir.model", model_id, ["id"])
+            await api.read("mail.template", template_id, ["id"])
+            return {"updated": await api.write("mail.template", template_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def archive_mail_template(instance: str, template_id: int, ctx: Context,
+                                    company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Archive a mail template without deleting it."""
+        require_tool_access("archive_mail_template", instance)
+        template_id = _positive_id(template_id, "template_id")
+        api = target(instance, company)
+        try:
+            await api.read("mail.template", template_id, ["id"])
+            return {"updated": await api.write("mail.template", template_id, {"active": False})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unarchive_mail_template(instance: str, template_id: int, ctx: Context,
+                                      company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Reactivate an archived mail template."""
+        require_tool_access("unarchive_mail_template", instance)
+        template_id = _positive_id(template_id, "template_id")
+        api = target(instance, company)
+        try:
+            await api.read("mail.template", template_id, ["id"])
+            return {"updated": await api.write("mail.template", template_id, {"active": True})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_mail_template_translation(instance: str, template_id: int, lang: str, ctx: Context,
+                                            company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, Any]:
+        """Read the translated name, subject, and HTML body for an active Odoo language."""
+        require_tool_access("get_mail_template_translation", instance)
+        _validate_lang_code(lang)
+        api = target(instance, company)
+        try:
+            languages = await api.search_read("res.lang", [["code", "=", lang], ["active", "=", True]], ["code"], 1)
+            if not languages: raise ValueError(f"Language {lang} is not installed or active in Odoo")
+            template_id = _positive_id(template_id, "template_id")
+            row = await api.read("mail.template", template_id, ["name", "subject", "body_html"], context={"lang": lang})
+            return {"template_id": template_id, "lang": lang, **row}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_mail_template_translation(instance: str, template_id: int, lang: str, ctx: Context,
+                                               name: str | None = None, subject: str | None = None,
+                                               body_html: str | None = None,
+                                               company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Update only translated name, subject, or body_html in one active Odoo language."""
+        require_tool_access("update_mail_template_translation", instance)
+        _validate_lang_code(lang)
+        values = {field: value for field, value in (("name", name), ("subject", subject), ("body_html", body_html))
+                  if value is not None}
+        if not values: raise ValueError("Provide at least one translated field: name, subject, or body_html")
+        if name is not None and not name.strip(): raise ValueError("translated name must not be empty")
+        if subject is not None and not subject.strip(): raise ValueError("translated subject must not be empty")
+        api = target(instance, company)
+        try:
+            languages = await api.search_read("res.lang", [["code", "=", lang], ["active", "=", True]], ["code"], 1)
+            if not languages: raise ValueError(f"Language {lang} is not installed or active in Odoo")
+            template_id = _positive_id(template_id, "template_id")
+            await api.read("mail.template", template_id, ["id"])
+            return {"updated": await api.write("mail.template", template_id, values, context={"lang": lang})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
     async def search_partners(instance: str, ctx: Context, query: str = "",
                               email: str | None = None, phone: str | None = None,
                               include_archived: bool = False, limit: int = 20, offset: int = 0,

@@ -37,6 +37,11 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     }),
     "task_archiver": frozenset({"archive_task", "unarchive_task"}),
     "support_ticket_editor": frozenset({"update_support_ticket"}),
+    "partner_viewer": frozenset({"search_partners", "get_partner"}),
+    "partner_editor": frozenset({
+        "search_partners", "get_partner", "create_partner", "update_partner",
+        "archive_partner", "unarchive_partner",
+    }),
     "crm_editor": frozenset({"create_crm_opportunity", "update_crm_opportunity", "set_crm_opportunity_stage",
                              "archive_crm_opportunity", "unarchive_crm_opportunity"}),
     "website_editor": frozenset({"update_page_content"}),

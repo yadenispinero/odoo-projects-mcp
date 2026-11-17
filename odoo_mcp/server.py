@@ -662,6 +662,139 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
+    async def search_partners(instance: str, ctx: Context, query: str = "",
+                              email: str | None = None, phone: str | None = None,
+                              include_archived: bool = False, limit: int = 20, offset: int = 0,
+                              company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """Search Odoo contacts and companies by name, email, or phone."""
+        require_tool_access("search_partners", instance)
+        domain: list = []
+        if query:
+            domain.extend(["|", "|", ["name", "ilike", query], ["email", "ilike", query], ["phone", "ilike", query]])
+        if email:
+            domain.append(["email", "ilike", email])
+        if phone:
+            domain.append(["phone", "ilike", phone])
+        api = target(instance, company)
+        try:
+            return await api.search_read("res.partner", domain,
+                ["id", "name", "is_company", "parent_id", "email", "phone", "mobile", "website",
+                 "street", "street2", "city", "zip", "country_id", "category_id", "active"],
+                _limit(limit), offset=_offset(offset), context={"active_test": not include_archived})
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_partner(instance: str, partner_id: int, ctx: Context,
+                          company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, Any]:
+        """Read one Odoo contact or company by ID."""
+        require_tool_access("get_partner", instance)
+        api = target(instance, company)
+        try:
+            return await api.read("res.partner", _positive_id(partner_id, "partner_id"),
+                ["id", "name", "is_company", "parent_id", "email", "phone", "mobile", "website",
+                 "street", "street2", "city", "zip", "country_id", "category_id", "active"])
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_partner(instance: str, name: str, ctx: Context, is_company: bool = False,
+                             parent_id: int | None = None, email: str | None = None,
+                             phone: str | None = None, mobile: str | None = None,
+                             website: str | None = None, street: str | None = None,
+                             street2: str | None = None, city: str | None = None,
+                             zip_code: str | None = None, country_id: int | None = None,
+                             category_ids: list[int] | None = None,
+                             company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
+        """Create a contact or company with explicitly supplied fields."""
+        require_tool_access("create_partner", instance)
+        if not name.strip():
+            raise ValueError("name must not be empty")
+        values: dict[str, Any] = {"name": name.strip(), "is_company": is_company}
+        for field, value in (("parent_id", parent_id), ("country_id", country_id)):
+            if value is not None:
+                values[field] = _positive_id(value, field)
+        for field, value in (("email", email), ("phone", phone), ("mobile", mobile),
+                             ("website", website), ("street", street), ("street2", street2),
+                             ("city", city), ("zip", zip_code)):
+            if value is not None:
+                values[field] = value
+        if category_ids is not None:
+            values["category_id"] = [[6, 0, [_positive_id(item, "category_id") for item in category_ids]]]
+        api = target(instance, company)
+        try:
+            return {"partner_id": await api.create("res.partner", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_partner(instance: str, partner_id: int, ctx: Context,
+                             name: str | None = None, is_company: bool | None = None,
+                             parent_id: int | None = None, clear_parent: bool = False,
+                             email: str | None = None, phone: str | None = None,
+                             mobile: str | None = None, website: str | None = None,
+                             street: str | None = None, street2: str | None = None,
+                             city: str | None = None, zip_code: str | None = None,
+                             country_id: int | None = None, clear_country: bool = False,
+                             category_ids: list[int] | None = None,
+                             company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Update supplied contact or company fields; empty strings clear text fields."""
+        require_tool_access("update_partner", instance)
+        if parent_id is not None and clear_parent:
+            raise ValueError("Use either parent_id or clear_parent, not both")
+        if country_id is not None and clear_country:
+            raise ValueError("Use either country_id or clear_country, not both")
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip(): raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        if is_company is not None: values["is_company"] = is_company
+        if parent_id is not None: values["parent_id"] = _positive_id(parent_id, "parent_id")
+        if clear_parent: values["parent_id"] = False
+        if country_id is not None: values["country_id"] = _positive_id(country_id, "country_id")
+        if clear_country: values["country_id"] = False
+        for field, value in (("email", email), ("phone", phone), ("mobile", mobile),
+                             ("website", website), ("street", street), ("street2", street2),
+                             ("city", city), ("zip", zip_code)):
+            if value is not None: values[field] = value
+        if category_ids is not None:
+            values["category_id"] = [[6, 0, [_positive_id(item, "category_id") for item in category_ids]]]
+        if not values:
+            raise ValueError("Provide at least one partner field to update")
+        api = target(instance, company)
+        try:
+            await api.read("res.partner", _positive_id(partner_id, "partner_id"), ["id"])
+            return {"updated": await api.write("res.partner", partner_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def archive_partner(instance: str, partner_id: int, ctx: Context,
+                              company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Archive a contact or company without deleting it."""
+        require_tool_access("archive_partner", instance)
+        partner_id = _positive_id(partner_id, "partner_id")
+        api = target(instance, company)
+        try:
+            await api.read("res.partner", partner_id, ["id"])
+            return {"updated": await api.write("res.partner", partner_id, {"active": False})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unarchive_partner(instance: str, partner_id: int, ctx: Context,
+                                company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Reactivate an archived contact or company."""
+        require_tool_access("unarchive_partner", instance)
+        partner_id = _positive_id(partner_id, "partner_id")
+        api = target(instance, company)
+        try:
+            await api.read("res.partner", partner_id, ["id"])
+            return {"updated": await api.write("res.partner", partner_id, {"active": True})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
     async def search_crm_opportunities(instance: str, ctx: Context, query: str = "",
                                        limit: int = 20, offset: int = 0, include_archived: bool = False,
                                        company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:

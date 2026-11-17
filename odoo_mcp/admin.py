@@ -156,7 +156,7 @@ ADMIN_PAGE = r"""<!doctype html>
   const app = document.querySelector('#app');
   const labels = {
     viewer: 'Consultar proyectos, tareas, tickets, canales de Discuss, oportunidades CRM y páginas',
-    crm_editor: 'Crear y editar oportunidades de CRM y cambiar su etapa',
+    crm_editor: 'Crear, editar, cambiar de etapa, archivar y restaurar oportunidades de CRM',
     task_editor: 'Crear y actualizar tareas, cambiar etapas y estados',
     task_archiver: 'Archivar y restaurar tareas',
     support_ticket_editor: 'Editar asunto, descripción, prioridad, equipo, etapa y persona asignada; quitar asignación',

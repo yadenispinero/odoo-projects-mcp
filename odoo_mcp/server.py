@@ -663,9 +663,9 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
 
     @mcp.tool()
     async def search_crm_opportunities(instance: str, ctx: Context, query: str = "",
-                                       limit: int = 20, offset: int = 0,
+                                       limit: int = 20, offset: int = 0, include_archived: bool = False,
                                        company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
-        """Search CRM opportunities by title, newest first."""
+        """Search CRM opportunities by title, newest first; optionally include archived records."""
         require_tool_access("search_crm_opportunities", instance)
         domain: list = [["type", "=", "opportunity"]]
         if query:
@@ -673,9 +673,10 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         api = target(instance, company)
         try:
             return await api.search_read("crm.lead", domain,
-                ["id", "name", "partner_id", "email_from", "phone", "expected_revenue",
-                 "probability", "stage_id", "user_id", "team_id", "date_deadline", "description"],
-                _limit(limit), offset=_offset(offset))
+                ["id", "name", "partner_id", "contact_name", "function", "email_from", "phone", "website", "expected_revenue",
+                 "probability", "priority", "stage_id", "user_id", "team_id", "date_deadline",
+                 "tag_ids", "source_id", "medium_id", "campaign_id", "active", "description"],
+                _limit(limit), offset=_offset(offset), context={"active_test": not include_archived})
         finally:
             await api.close()
 
@@ -687,8 +688,9 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         api = target(instance, company)
         try:
             row = await api.read("crm.lead", _positive_id(opportunity_id, "opportunity_id"),
-                ["id", "name", "partner_id", "email_from", "phone", "expected_revenue",
-                 "probability", "stage_id", "user_id", "team_id", "date_deadline", "description", "type"])
+                ["id", "name", "partner_id", "contact_name", "function", "email_from", "phone", "website", "expected_revenue",
+                 "probability", "priority", "stage_id", "user_id", "team_id", "date_deadline",
+                 "tag_ids", "source_id", "medium_id", "campaign_id", "active", "description", "type"])
             if row.get("type") != "opportunity":
                 raise ValueError("The selected CRM record is a lead, not an opportunity")
             return row
@@ -709,10 +711,15 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def create_crm_opportunity(instance: str, name: str, ctx: Context,
                                      partner_id: int | None = None, email: str | None = None,
-                                     phone: str | None = None, expected_revenue: float | None = None,
+                                     contact_name: str | None = None, function: str | None = None,
+                                     phone: str | None = None, website: str | None = None,
+                                     expected_revenue: float | None = None,
+                                     probability: float | None = None, priority: str | None = None,
                                      stage_id: int | None = None, user_id: int | None = None,
                                      team_id: int | None = None, date_deadline: str | None = None,
-                                     description: str | None = None,
+                                     description: str | None = None, tag_ids: list[int] | None = None,
+                                     source_id: int | None = None, medium_id: int | None = None,
+                                     campaign_id: int | None = None,
                                      company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
         """Create a CRM opportunity with explicitly supplied fields."""
         require_tool_access("create_crm_opportunity", instance)
@@ -720,13 +727,26 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             raise ValueError("name must not be empty")
         values: dict[str, Any] = {"name": name.strip(), "type": "opportunity"}
         for field, value in (("partner_id", partner_id), ("stage_id", stage_id),
-                             ("user_id", user_id), ("team_id", team_id)):
+                             ("user_id", user_id), ("team_id", team_id), ("source_id", source_id),
+                             ("medium_id", medium_id), ("campaign_id", campaign_id)):
             if value is not None:
                 values[field] = _positive_id(value, field)
         if email is not None: values["email_from"] = email
+        if contact_name is not None: values["contact_name"] = contact_name
+        if function is not None: values["function"] = function
         if phone is not None: values["phone"] = phone
+        if website is not None: values["website"] = website
         if expected_revenue is not None:
             values["expected_revenue"] = _positive_number(expected_revenue, "expected_revenue", allow_zero=True)
+        if probability is not None:
+            probability = _positive_number(probability, "probability", allow_zero=True)
+            if probability > 100: raise ValueError("probability must be between 0 and 100")
+            values["probability"] = probability
+        if priority is not None:
+            if priority not in {"0", "1", "2", "3"}: raise ValueError("priority must be one of: 0, 1, 2, 3")
+            values["priority"] = priority
+        if tag_ids is not None:
+            values["tag_ids"] = [[6, 0, [_positive_id(tag_id, "tag_id") for tag_id in tag_ids]]]
         if date_deadline is not None: values["date_deadline"] = _validate_date(date_deadline, "date_deadline")
         if description is not None: values["description"] = description
         api = target(instance, company)
@@ -738,10 +758,15 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     @mcp.tool()
     async def update_crm_opportunity(instance: str, opportunity_id: int, ctx: Context,
                                      name: str | None = None, partner_id: int | None = None,
-                                     email: str | None = None, phone: str | None = None,
-                                     expected_revenue: float | None = None, user_id: int | None = None,
+                                     email: str | None = None, contact_name: str | None = None,
+                                     function: str | None = None, phone: str | None = None,
+                                     website: str | None = None,
+                                     expected_revenue: float | None = None, probability: float | None = None,
+                                     priority: str | None = None, user_id: int | None = None,
                                      team_id: int | None = None, date_deadline: str | None = None,
-                                     description: str | None = None,
+                                     description: str | None = None, tag_ids: list[int] | None = None,
+                                     source_id: int | None = None, medium_id: int | None = None,
+                                     campaign_id: int | None = None,
                                      company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
         """Update supplied CRM opportunity fields; use set_crm_opportunity_stage for stage changes."""
         require_tool_access("update_crm_opportunity", instance)
@@ -750,12 +775,25 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         if name is not None:
             if not name.strip(): raise ValueError("name must not be empty")
             values["name"] = name.strip()
-        for field, value in (("partner_id", partner_id), ("user_id", user_id), ("team_id", team_id)):
+        for field, value in (("partner_id", partner_id), ("user_id", user_id), ("team_id", team_id),
+                             ("source_id", source_id), ("medium_id", medium_id), ("campaign_id", campaign_id)):
             if value is not None: values[field] = _positive_id(value, field)
         if email is not None: values["email_from"] = email
+        if contact_name is not None: values["contact_name"] = contact_name
+        if function is not None: values["function"] = function
         if phone is not None: values["phone"] = phone
+        if website is not None: values["website"] = website
         if expected_revenue is not None:
             values["expected_revenue"] = _positive_number(expected_revenue, "expected_revenue", allow_zero=True)
+        if probability is not None:
+            probability = _positive_number(probability, "probability", allow_zero=True)
+            if probability > 100: raise ValueError("probability must be between 0 and 100")
+            values["probability"] = probability
+        if priority is not None:
+            if priority not in {"0", "1", "2", "3"}: raise ValueError("priority must be one of: 0, 1, 2, 3")
+            values["priority"] = priority
+        if tag_ids is not None:
+            values["tag_ids"] = [[6, 0, [_positive_id(tag_id, "tag_id") for tag_id in tag_ids]]]
         if date_deadline is not None: values["date_deadline"] = _validate_date(date_deadline, "date_deadline") if date_deadline else False
         if description is not None: values["description"] = description
         if not values: raise ValueError("Provide at least one opportunity field to update")
@@ -764,6 +802,34 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             record = await api.read("crm.lead", record_id, ["type"])
             if record.get("type") != "opportunity": raise ValueError("The selected CRM record is a lead, not an opportunity")
             return {"updated": await api.write("crm.lead", record_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def archive_crm_opportunity(instance: str, opportunity_id: int, ctx: Context,
+                                      company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Archive one CRM opportunity without deleting it."""
+        require_tool_access("archive_crm_opportunity", instance)
+        record_id = _positive_id(opportunity_id, "opportunity_id")
+        api = target(instance, company)
+        try:
+            record = await api.read("crm.lead", record_id, ["type"])
+            if record.get("type") != "opportunity": raise ValueError("The selected CRM record is a lead, not an opportunity")
+            return {"updated": await api.write("crm.lead", record_id, {"active": False})}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def unarchive_crm_opportunity(instance: str, opportunity_id: int, ctx: Context,
+                                        company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Restore one archived CRM opportunity."""
+        require_tool_access("unarchive_crm_opportunity", instance)
+        record_id = _positive_id(opportunity_id, "opportunity_id")
+        api = target(instance, company)
+        try:
+            record = await api.read("crm.lead", record_id, ["type"])
+            if record.get("type") != "opportunity": raise ValueError("The selected CRM record is a lead, not an opportunity")
+            return {"updated": await api.write("crm.lead", record_id, {"active": True})}
         finally:
             await api.close()
 

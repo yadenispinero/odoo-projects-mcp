@@ -12,7 +12,7 @@ from .odoo_api import OdooApiError, OdooJson2
 ROLE_GROUPS = [
     {"module": "Proyectos", "roles": ["project_manager"]},
     {"module": "Tareas", "roles": ["task_editor", "task_archiver"]},
-    {"module": "Soporte", "roles": ["support_ticket_editor"]},
+    {"module": "Soporte", "roles": ["support_ticket_editor", "helpdesk_config_editor"]},
     {"module": "CRM", "roles": ["crm_editor"]},
     {"module": "Contactos", "roles": ["partner_viewer", "partner_editor"]},
     {"module": "Plantillas de correo", "roles": ["mail_template_viewer", "mail_template_editor", "mail_template_translator"]},
@@ -172,6 +172,7 @@ ADMIN_PAGE = r"""<!doctype html>
     task_editor: 'Crear y actualizar tareas, cambiar etapas y estados',
     task_archiver: 'Archivar y restaurar tareas',
     support_ticket_editor: 'Editar asunto, descripción, prioridad, equipo, etapa y persona asignada; quitar asignación',
+    helpdesk_config_editor: 'Crear y editar etapas y equipos de Helpdesk',
     purchase_viewer: 'Consultar órdenes de compra, proveedores, líneas e importes',
     purchase_manager: 'Crear RFQ, editar órdenes en borrador y administrar sus líneas',
     purchase_approver: 'Confirmar RFQ y convertirlas en órdenes de compra',

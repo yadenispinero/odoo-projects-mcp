@@ -23,6 +23,8 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
             "search_support_tickets",
             "get_support_ticket",
             "get_support_ticket_messages",
+            "list_helpdesk_teams",
+            "list_helpdesk_stages",
             "search_discuss_channels",
             "get_discuss_channel_messages",
             "search_crm_opportunities",
@@ -37,6 +39,10 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     }),
     "task_archiver": frozenset({"archive_task", "unarchive_task"}),
     "support_ticket_editor": frozenset({"update_support_ticket"}),
+    "helpdesk_config_editor": frozenset({
+        "create_helpdesk_team", "update_helpdesk_team",
+        "create_helpdesk_stage", "update_helpdesk_stage",
+    }),
     "partner_viewer": frozenset({"search_partners", "get_partner"}),
     "partner_editor": frozenset({
         "search_partners", "get_partner", "create_partner", "update_partner",

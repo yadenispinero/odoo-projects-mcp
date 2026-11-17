@@ -27,6 +27,7 @@ Business tools accept an optional exact `company` name. The server lists compani
 
 - Search and read projects and tasks.
 - Search and read Helpdesk tickets; update ticket subject, description, priority, team, stage, and assignee with a dedicated role.
+- List, create, and edit Helpdesk teams and stages with a separate configuration role. Stage team assignments can be set explicitly.
 - Search Discuss channels and read their messages for a requested date range.
 - Search and read CRM opportunities; create, edit, stage, archive, and restore opportunities with the `crm_editor` role. Editable fields include contact details, revenue, probability, priority, tags, owner, team, source, campaign, deadline, and description.
 - Search and read contacts and companies; create and edit their contact, address, parent, country, and tag fields; archive or reactivate records with partner roles.
@@ -47,6 +48,8 @@ Business tools accept an optional exact `company` name. The server lists compani
 - Connect to Odoo 19+ through JSON-2 or Odoo 15/18 through XML-RPC over HTTPS.
 
 Support-ticket tools target the `helpdesk.ticket` model and require a Helpdesk module that provides that model on the Odoo database, plus appropriate Odoo access rights for the technical user. Helpdesk is not part of every Odoo Community installation; availability depends on the installed edition/modules.
+
+Helpdesk team configuration uses `helpdesk.team`; stage configuration uses `helpdesk.stage`. Team descriptions may be shown on public ticket-submission forms. Setting a stage's `fold` value treats tickets in that stage as closed in Helpdesk reporting, so change it only when that is intended.
 
 Purchase tools use Odoo's standard `purchase.order` and `purchase.order.line` models. They are implemented for the configured XML-RPC path (Odoo 15/18) and JSON-2 path (Odoo 19), but still need live verification on each supported deployment. The bill operation calls Odoo's purchase invoicing action and returns the resulting draft supplier bill (`account.move` with `move_type=in_invoice`); it does not post the bill.
 
@@ -119,6 +122,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `task_editor` | Create and update tasks; list project stages and change task stage/state |
 | `task_archiver` | Archive and restore tasks |
 | `support_ticket_editor` | Update ticket subject, description, priority, team, stage, and assignee; `clear_assignee` removes the assignee |
+| `helpdesk_config_editor` | Create and edit Helpdesk teams and stages |
 | `crm_editor` | Create and edit CRM opportunities, change stage, archive, and restore them |
 | `partner_viewer` | Search and read contacts and companies, including archived records when requested |
 | `partner_editor` | Search, read, create, edit, archive, and reactivate contacts and companies |
@@ -137,7 +141,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `vendor_bill_creator` | Create draft supplier bills from confirmed orders with invoiceable quantities |
 | `administrator` | All currently registered tools and user administration |
 
-Roles can be combined for a user. `viewer` can find Discuss channels and read channel messages for an inclusive date range, and can search/read CRM opportunities, including archived ones when requested. `crm_editor` adds create, field edit, stage-change, archive, and restore operations. `partner_viewer` provides read access to contacts and companies; `partner_editor` adds creation, edits, archiving, and reactivation. Mail template access is separately granted by the three `mail_template_*` roles; translation tools only write the translatable name, subject, and body fields in the explicitly selected active language. Viewer can also search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
+Roles can be combined for a user. `viewer` can find Discuss channels and read channel messages for an inclusive date range, and can search/read CRM opportunities, including archived ones when requested. `crm_editor` adds create, field edit, stage-change, archive, and restore operations. `partner_viewer` provides read access to contacts and companies; `partner_editor` adds creation, edits, archiving, and reactivation. Mail template access is separately granted by the three `mail_template_*` roles; translation tools only write the translatable name, subject, and body fields in the explicitly selected active language. Viewer can also search and read support tickets, including their messages, and list Helpdesk teams and stages. Add `helpdesk_config_editor` for team and stage configuration, or `support_ticket_editor` for ticket changes. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
 
 Archiving a project also archives all its tasks. Restoring the project restores all its tasks too, including tasks that were already archived individually before the project was archived.
 

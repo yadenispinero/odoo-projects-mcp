@@ -1151,6 +1151,121 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             await api.close()
 
     @mcp.tool()
+    async def list_helpdesk_teams(instance: str, ctx: Context, query: str = "",
+                                  include_archived: bool = False, limit: int = 50,
+                                  company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """List Helpdesk teams and IDs, optionally including inactive teams."""
+        require_tool_access("list_helpdesk_teams", instance)
+        domain: list = [["name", "ilike", query]] if query else []
+        api = target(instance, company)
+        try:
+            return await api.search_read("helpdesk.team", domain,
+                ["id", "name", "description", "company_id", "active"], _limit(limit),
+                "name asc, id asc", context={"active_test": not include_archived})
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def list_helpdesk_stages(instance: str, ctx: Context, team_id: int | None = None,
+                                   limit: int = 100,
+                                   company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """List Helpdesk stages and IDs, optionally only stages assigned to a team."""
+        require_tool_access("list_helpdesk_stages", instance)
+        domain: list = [["team_ids", "in", [_positive_id(team_id, "team_id")]]] if team_id is not None else []
+        api = target(instance, company)
+        try:
+            return await api.search_read("helpdesk.stage", domain,
+                ["id", "name", "sequence", "fold", "team_ids"], _limit(limit), "sequence asc, id asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_helpdesk_team(instance: str, name: str, ctx: Context,
+                                   description: str | None = None, company_id: int | None = None,
+                                   company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
+        """Create a Helpdesk team. Odoo may display its description on public ticket forms."""
+        require_tool_access("create_helpdesk_team", instance)
+        if not name.strip(): raise ValueError("name must not be empty")
+        values: dict[str, Any] = {"name": name.strip()}
+        if description is not None: values["description"] = description
+        if company_id is not None: values["company_id"] = _positive_id(company_id, "company_id")
+        api = target(instance, company)
+        try:
+            if company_id is not None: await api.read("res.company", company_id, ["id"])
+            return {"team_id": await api.create("helpdesk.team", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_helpdesk_team(instance: str, team_id: int, ctx: Context,
+                                   name: str | None = None, description: str | None = None,
+                                   company_id: int | None = None,
+                                   company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Update a Helpdesk team's name, public-form description, or company."""
+        require_tool_access("update_helpdesk_team", instance)
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip(): raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        if description is not None: values["description"] = description
+        if company_id is not None: values["company_id"] = _positive_id(company_id, "company_id")
+        if not values: raise ValueError("Provide at least one Helpdesk team field to update")
+        team_id = _positive_id(team_id, "team_id")
+        api = target(instance, company)
+        try:
+            await api.read("helpdesk.team", team_id, ["id"])
+            if company_id is not None: await api.read("res.company", company_id, ["id"])
+            return {"updated": await api.write("helpdesk.team", team_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_helpdesk_stage(instance: str, name: str, ctx: Context,
+                                    sequence: int = 10, fold: bool = False,
+                                    team_ids: list[int] | None = None,
+                                    company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
+        """Create a Helpdesk stage. A folded stage is treated as closed in ticket reporting."""
+        require_tool_access("create_helpdesk_stage", instance)
+        if not name.strip(): raise ValueError("name must not be empty")
+        if isinstance(sequence, bool) or sequence < 0: raise ValueError("sequence must be zero or a positive integer")
+        values: dict[str, Any] = {"name": name.strip(), "sequence": sequence, "fold": fold}
+        if team_ids is not None:
+            values["team_ids"] = [[6, 0, [_positive_id(item, "team_id") for item in team_ids]]]
+        api = target(instance, company)
+        try:
+            for team_id in team_ids or []: await api.read("helpdesk.team", _positive_id(team_id, "team_id"), ["id"])
+            return {"stage_id": await api.create("helpdesk.stage", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_helpdesk_stage(instance: str, stage_id: int, ctx: Context,
+                                    name: str | None = None, sequence: int | None = None,
+                                    fold: bool | None = None, team_ids: list[int] | None = None,
+                                    company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Edit a Helpdesk stage. Setting fold=true treats tickets in it as closed in reporting."""
+        require_tool_access("update_helpdesk_stage", instance)
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip(): raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        if sequence is not None:
+            if isinstance(sequence, bool) or sequence < 0: raise ValueError("sequence must be zero or a positive integer")
+            values["sequence"] = sequence
+        if fold is not None: values["fold"] = fold
+        if team_ids is not None:
+            values["team_ids"] = [[6, 0, [_positive_id(item, "team_id") for item in team_ids]]]
+        if not values: raise ValueError("Provide at least one Helpdesk stage field to update")
+        stage_id = _positive_id(stage_id, "stage_id")
+        api = target(instance, company)
+        try:
+            await api.read("helpdesk.stage", stage_id, ["id"])
+            for team_id in team_ids or []: await api.read("helpdesk.team", _positive_id(team_id, "team_id"), ["id"])
+            return {"updated": await api.write("helpdesk.stage", stage_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
     async def search_support_tickets(instance: str, ctx: Context, query: str = "",
                                      team_id: int | None = None, limit: int = 20, offset: int = 0,
                                      include_description: bool = True, company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:

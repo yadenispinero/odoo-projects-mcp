@@ -77,6 +77,10 @@ ADMIN_PAGE = r"""<!doctype html>
     .error { color: #a32626; white-space: pre-wrap; }
     .notice { margin: 12px 0; padding: 10px 12px; border: 1px solid #9bc99b; border-radius: 6px; color: #185b28; background: #edf7ed; }
     .notice.error { border-color: #d99; color: #a32626; background: #fff1f1; }
+    .toast { position: fixed; z-index: 1000; right: 20px; bottom: 20px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; width: min(480px, calc(100vw - 40px)); box-sizing: border-box; margin: 0; padding: 14px 16px; box-shadow: 0 8px 28px rgb(24 34 48 / 22%); }
+    .toast.hidden { display: none; }
+    .toast-dismiss { flex: 0 0 auto; margin: -5px -7px 0 0; padding: 2px 8px; background: transparent; color: inherit; font-size: 1.35rem; line-height: 1.2; }
+    .toast-dismiss:hover { background: rgb(0 0 0 / 8%); }
     .field-help { margin: 5px 0 10px; font-size: .9rem; }
     .user h3 { margin: 0; }
     @media (max-width: 760px) {
@@ -107,9 +111,11 @@ ADMIN_PAGE = r"""<!doctype html>
       </nav>
       <button id="sign-out" class="secondary">Sign out</button>
     </div>
+    <div id="global-message" class="notice toast hidden" role="status" aria-live="polite">
+      <span id="global-message-text"></span><button id="dismiss-message" class="toast-dismiss" type="button" aria-label="Dismiss notification">×</button>
+    </div>
     <section id="instances-panel" class="admin-view">
       <h2>Odoo instances</h2>
-      <p id="instance-message" class="notice hidden" role="status" aria-live="polite"></p>
       <p class="muted">Instance connections are stored outside the project source, in the private MCP data directory. API keys are never displayed after saving.</p>
       <p id="wildcard-warning" class="muted"></p>
       <div id="instance-layout">
@@ -134,7 +140,6 @@ ADMIN_PAGE = r"""<!doctype html>
     <section id="users-panel" class="admin-view hidden">
       <h2>Users and access</h2>
       <p class="muted field-help">Ticket access: <strong>viewer</strong> grants search/read; add <strong>support_ticket_editor</strong> to allow changes.</p>
-      <p id="user-message" class="notice hidden" role="status" aria-live="polite"></p>
       <div id="users-layout">
         <section id="enabled-users-panel"><h3>Enabled users</h3><div id="users"></div></section>
         <details id="create-panel" class="user">
@@ -187,11 +192,14 @@ ADMIN_PAGE = r"""<!doctype html>
   let editingInstanceActive = true;
   let testedInstancePayload = null;
   const token = () => sessionStorage.getItem(tokenKey) || '';
-  const notify = (text, isError = false, section = 'users') => {
-    const message = document.querySelector(section === 'instances' ? '#instance-message' : '#user-message');
-    message.textContent = text;
-    message.className = isError ? 'notice error' : 'notice';
+  const notify = (text, isError = false) => {
+    const message = document.querySelector('#global-message');
+    document.querySelector('#global-message-text').textContent = text;
+    message.className = isError ? 'notice toast error' : 'notice toast';
   };
+  document.querySelector('#dismiss-message').addEventListener('click', () => {
+    document.querySelector('#global-message').classList.add('hidden');
+  });
   const api = async (path, options = {}) => {
     const response = await fetch('/admin/api' + path, {
       ...options,
@@ -286,8 +294,7 @@ ADMIN_PAGE = r"""<!doctype html>
     document.querySelector('#test-instance').disabled = false;
     document.querySelector('#cancel-instance').classList.add('hidden');
     updateConnectionFields();
-    const instanceMessage = document.querySelector('#instance-message');
-    instanceMessage.textContent = ''; instanceMessage.className = 'notice hidden';
+    document.querySelector('#global-message').classList.add('hidden');
   };
   const loadInstances = async () => {
     const data = await api('/instances');

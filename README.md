@@ -1,6 +1,6 @@
 # Odoo Projects MCP
 
-An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, support tickets, purchase orders, vendor bills, website pages, and blog posts.
+An independently deployable MCP server that gives AI clients and workflow tools a narrow, role-controlled interface to Odoo projects, tasks, Discuss channels, CRM opportunities, support tickets, purchase orders, vendor bills, website pages, and blog posts.
 
 > **Portfolio project:** demonstrates integration planning, API discovery, scoped tool design, role-based access, Docker deployment, and security trade-off documentation. It is a prototype and has not been independently audited or certified for regulatory compliance.
 
@@ -27,6 +27,8 @@ Business tools accept an optional exact `company` name. The server lists compani
 
 - Search and read projects and tasks.
 - Search and read Helpdesk tickets; update ticket subject, description, priority, team, stage, and assignee with a dedicated role.
+- Search Discuss channels and read their messages for a requested date range.
+- Search and read CRM opportunities; create and edit opportunities and move them to a selected CRM stage with the `crm_editor` role.
 - Search and read RFQs and purchase orders; create draft RFQs, edit their header and lines, and confirm them with separate roles. Create draft vendor bills from confirmed orders when Odoo reports invoiceable quantities; posting bills remains an Odoo-side action.
 - Create and update projects and tasks with validated fields, including task assignees; move tasks between project stages and allowed states; archive and restore tasks and projects.
 - Search and read website pages, update page content, and publish or unpublish with separate tools.
@@ -115,6 +117,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `task_editor` | Create and update tasks; list project stages and change task stage/state |
 | `task_archiver` | Archive and restore tasks |
 | `support_ticket_editor` | Update ticket subject, description, priority, team, stage, and assignee; `clear_assignee` removes the assignee |
+| `crm_editor` | Create and edit CRM opportunities and change their stage |
 | `project_manager` | Search, read, create, update, archive, and restore projects; list task stages |
 | `website_editor` | Edit page content |
 | `publisher` | Publish and unpublish pages |
@@ -127,7 +130,7 @@ To keep configuration outside the repository, set `MCP_CONNECTIONS_DIR` in the i
 | `vendor_bill_creator` | Create draft supplier bills from confirmed orders with invoiceable quantities |
 | `administrator` | All currently registered tools and user administration |
 
-Roles can be combined for a user. The `viewer` role can search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
+Roles can be combined for a user. `viewer` can find Discuss channels and read channel messages for an inclusive date range, and can search/read CRM opportunities. `crm_editor` adds create, edit, and stage-change operations. Viewer can also search and read support tickets, including each ticket's `message_count` and its conversation (`get_support_ticket_messages`: emails, messages and internal notes, oldest first); `search_support_tickets` pages with `offset` and can omit the long description with `include_description=false`. Combine it with `support_ticket_editor` when the user needs both read and update access. Instance access is configured separately per user. New users in the admin page must receive explicit active instance names; use `*` only when they need every current and future instance.
 
 Archiving a project also archives all its tasks. Restoring the project restores all its tasks too, including tasks that were already archived individually before the project was archived.
 

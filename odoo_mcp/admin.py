@@ -13,6 +13,7 @@ ROLE_GROUPS = [
     {"module": "Proyectos", "roles": ["project_manager"]},
     {"module": "Tareas", "roles": ["task_editor", "task_archiver"]},
     {"module": "Soporte", "roles": ["support_ticket_editor"]},
+    {"module": "CRM", "roles": ["crm_editor"]},
     {"module": "Compras y facturación", "roles": ["purchase_viewer", "purchase_manager", "purchase_approver", "vendor_bill_creator"]},
     {"module": "Sitio web", "roles": ["website_editor", "publisher"]},
     {"module": "Blog", "roles": ["blog_editor", "blog_publisher", "blog_scheduler"]},
@@ -154,7 +155,8 @@ ADMIN_PAGE = r"""<!doctype html>
   const login = document.querySelector('#login');
   const app = document.querySelector('#app');
   const labels = {
-    viewer: 'Consultar proyectos, tareas, tickets de soporte y páginas, incluidos archivados',
+    viewer: 'Consultar proyectos, tareas, tickets, canales de Discuss, oportunidades CRM y páginas',
+    crm_editor: 'Crear y editar oportunidades de CRM y cambiar su etapa',
     task_editor: 'Crear y actualizar tareas, cambiar etapas y estados',
     task_archiver: 'Archivar y restaurar tareas',
     support_ticket_editor: 'Editar asunto, descripción, prioridad, equipo, etapa y persona asignada; quitar asignación',

@@ -335,6 +335,32 @@ def _validate_date(value: str, label: str) -> str:
     return value
 
 
+def _validate_odoo_datetime_bound(value: str, label: str, *, end_of_day: bool) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must use YYYY-MM-DD or an ISO datetime")
+    try:
+        if len(value) == 10:
+            date.fromisoformat(value)
+            return value + (" 23:59:59" if end_of_day else " 00:00:00")
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError as exc:
+        raise ValueError(f"{label} must use YYYY-MM-DD or an ISO datetime") from exc
+
+
+async def _discuss_channel_model(api: OdooJson2) -> str:
+    """Odoo renamed mail.channel to discuss.channel in newer releases."""
+    version = await api.version()
+    info = version.get("server_version_info") or version.get("version_info")
+    major = info[0] if isinstance(info, (list, tuple)) and info else None
+    if major is None:
+        match = re.match(r"\s*(\d+)", str(version.get("server_version") or version.get("version") or ""))
+        major = int(match.group(1)) if match else 0
+    return "discuss.channel" if major >= 17 else "mail.channel"
+
+
 def _validate_lang_code(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[a-z]{2,3}(?:_[A-Z]{2}|_[0-9]{3})?(?:@[a-z]+)?", value):
         raise ValueError("lang must use Odoo res.lang.code format, for example es_ES, es_419, or sr@latin")
@@ -592,6 +618,168 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
             if row.get("res_id") in counts:
                 counts[row["res_id"]] += 1
         return counts
+
+    @mcp.tool()
+    async def search_discuss_channels(instance: str, ctx: Context, query: str = "",
+                                     limit: int = 20, company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """Find Odoo Discuss channels by name so their messages can be read by channel ID."""
+        require_tool_access("search_discuss_channels", instance)
+        domain: list = [["name", "ilike", query]] if query else []
+        api = target(instance, company)
+        try:
+            channel_model = await _discuss_channel_model(api)
+            return await api.search_read(channel_model, domain,
+                ["id", "name", "channel_type", "public"], _limit(limit), "name asc, id asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_discuss_channel_messages(instance: str, channel_id: int, date_from: str,
+                                           date_to: str, ctx: Context, limit: int = 100,
+                                           offset: int = 0, company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """Read Discuss channel messages within an inclusive ISO date/datetime range, oldest first.
+
+        date_from and date_to accept YYYY-MM-DD or an Odoo datetime (YYYY-MM-DD HH:MM:SS).
+        """
+        require_tool_access("get_discuss_channel_messages", instance)
+        channel_id = _positive_id(channel_id, "channel_id")
+        limit, offset = _limit(limit), _offset(offset)
+        start = _validate_odoo_datetime_bound(date_from, "date_from", end_of_day=False)
+        end = _validate_odoo_datetime_bound(date_to, "date_to", end_of_day=True)
+        if start > end:
+            raise ValueError("date_from must be on or before date_to")
+        api = target(instance, company)
+        try:
+            channel_model = await _discuss_channel_model(api)
+            await api.read(channel_model, channel_id, ["id"])
+            return await api.search_read("mail.message", [
+                ["model", "=", channel_model], ["res_id", "=", channel_id],
+                ["message_type", "in", ["email", "comment", "email_outgoing"]],
+                ["date", ">=", start], ["date", "<=", end],
+            ], ["id", "date", "author_id", "email_from", "message_type", "subtype_id", "body"],
+                limit, "date asc, id asc", offset=offset)
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def search_crm_opportunities(instance: str, ctx: Context, query: str = "",
+                                       limit: int = 20, offset: int = 0,
+                                       company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """Search CRM opportunities by title, newest first."""
+        require_tool_access("search_crm_opportunities", instance)
+        domain: list = [["type", "=", "opportunity"]]
+        if query:
+            domain.append(["name", "ilike", query])
+        api = target(instance, company)
+        try:
+            return await api.search_read("crm.lead", domain,
+                ["id", "name", "partner_id", "email_from", "phone", "expected_revenue",
+                 "probability", "stage_id", "user_id", "team_id", "date_deadline", "description"],
+                _limit(limit), offset=_offset(offset))
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def get_crm_opportunity(instance: str, opportunity_id: int, ctx: Context,
+                                  company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, Any]:
+        """Read one CRM opportunity by ID."""
+        require_tool_access("get_crm_opportunity", instance)
+        api = target(instance, company)
+        try:
+            row = await api.read("crm.lead", _positive_id(opportunity_id, "opportunity_id"),
+                ["id", "name", "partner_id", "email_from", "phone", "expected_revenue",
+                 "probability", "stage_id", "user_id", "team_id", "date_deadline", "description", "type"])
+            if row.get("type") != "opportunity":
+                raise ValueError("The selected CRM record is a lead, not an opportunity")
+            return row
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def list_crm_stages(instance: str, ctx: Context,
+                              company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
+        """List CRM stages and IDs, which are needed to create or move opportunities."""
+        require_tool_access("list_crm_stages", instance)
+        api = target(instance, company)
+        try:
+            return await api.search_read("crm.stage", [], ["id", "name", "sequence", "team_id"], 1000, "sequence asc, id asc")
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def create_crm_opportunity(instance: str, name: str, ctx: Context,
+                                     partner_id: int | None = None, email: str | None = None,
+                                     phone: str | None = None, expected_revenue: float | None = None,
+                                     stage_id: int | None = None, user_id: int | None = None,
+                                     team_id: int | None = None, date_deadline: str | None = None,
+                                     description: str | None = None,
+                                     company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
+        """Create a CRM opportunity with explicitly supplied fields."""
+        require_tool_access("create_crm_opportunity", instance)
+        if not name.strip():
+            raise ValueError("name must not be empty")
+        values: dict[str, Any] = {"name": name.strip(), "type": "opportunity"}
+        for field, value in (("partner_id", partner_id), ("stage_id", stage_id),
+                             ("user_id", user_id), ("team_id", team_id)):
+            if value is not None:
+                values[field] = _positive_id(value, field)
+        if email is not None: values["email_from"] = email
+        if phone is not None: values["phone"] = phone
+        if expected_revenue is not None:
+            values["expected_revenue"] = _positive_number(expected_revenue, "expected_revenue", allow_zero=True)
+        if date_deadline is not None: values["date_deadline"] = _validate_date(date_deadline, "date_deadline")
+        if description is not None: values["description"] = description
+        api = target(instance, company)
+        try:
+            return {"opportunity_id": await api.create("crm.lead", values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def update_crm_opportunity(instance: str, opportunity_id: int, ctx: Context,
+                                     name: str | None = None, partner_id: int | None = None,
+                                     email: str | None = None, phone: str | None = None,
+                                     expected_revenue: float | None = None, user_id: int | None = None,
+                                     team_id: int | None = None, date_deadline: str | None = None,
+                                     description: str | None = None,
+                                     company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Update supplied CRM opportunity fields; use set_crm_opportunity_stage for stage changes."""
+        require_tool_access("update_crm_opportunity", instance)
+        record_id = _positive_id(opportunity_id, "opportunity_id")
+        values: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip(): raise ValueError("name must not be empty")
+            values["name"] = name.strip()
+        for field, value in (("partner_id", partner_id), ("user_id", user_id), ("team_id", team_id)):
+            if value is not None: values[field] = _positive_id(value, field)
+        if email is not None: values["email_from"] = email
+        if phone is not None: values["phone"] = phone
+        if expected_revenue is not None:
+            values["expected_revenue"] = _positive_number(expected_revenue, "expected_revenue", allow_zero=True)
+        if date_deadline is not None: values["date_deadline"] = _validate_date(date_deadline, "date_deadline") if date_deadline else False
+        if description is not None: values["description"] = description
+        if not values: raise ValueError("Provide at least one opportunity field to update")
+        api = target(instance, company)
+        try:
+            record = await api.read("crm.lead", record_id, ["type"])
+            if record.get("type") != "opportunity": raise ValueError("The selected CRM record is a lead, not an opportunity")
+            return {"updated": await api.write("crm.lead", record_id, values)}
+        finally:
+            await api.close()
+
+    @mcp.tool()
+    async def set_crm_opportunity_stage(instance: str, opportunity_id: int, stage_id: int,
+                                        ctx: Context, company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
+        """Move an opportunity to an existing CRM stage."""
+        require_tool_access("set_crm_opportunity_stage", instance)
+        record_id, stage_id = _positive_id(opportunity_id, "opportunity_id"), _positive_id(stage_id, "stage_id")
+        api = target(instance, company)
+        try:
+            record = await api.read("crm.lead", record_id, ["type"])
+            if record.get("type") != "opportunity": raise ValueError("The selected CRM record is a lead, not an opportunity")
+            return {"updated": await api.write("crm.lead", record_id, {"stage_id": stage_id})}
+        finally:
+            await api.close()
 
     @mcp.tool()
     async def search_support_tickets(instance: str, ctx: Context, query: str = "",

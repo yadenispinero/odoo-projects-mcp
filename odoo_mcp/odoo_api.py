@@ -173,6 +173,9 @@ class OdooJson2:
 
     @staticmethod
     def _xmlrpc_arguments(method: str, payload: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+        if method == "fields_get":
+            kwargs = {key: payload[key] for key in ("attributes", "context") if key in payload}
+            return [payload.get("allfields")], kwargs
         if method == "search_read":
             kwargs = {key: payload[key] for key in ("fields", "limit", "offset", "order", "context")
                       if key in payload}
@@ -260,6 +263,14 @@ class OdooJson2:
         result = await self.call(model, "unlink", {"ids": [record_id]})
         if result is not True:
             raise OdooApiError(f"Unexpected response from {model}.unlink")
+        return result
+
+    async def fields_get(self, model: str, attributes: list[str] | None = None) -> dict[str, Any]:
+        """Read model field metadata for code-defined compatibility checks."""
+        payload = {"attributes": attributes or ["type", "relation"]}
+        result = await self.call(model, "fields_get", payload)
+        if not isinstance(result, dict):
+            raise OdooApiError(f"Unexpected response from {model}.fields_get")
         return result
 
     async def get_field_translations(

@@ -361,6 +361,72 @@ async def _discuss_channel_model(api: OdooJson2) -> str:
     return "discuss.channel" if major >= 17 else "mail.channel"
 
 
+async def _helpdesk_model_names(api: OdooJson2) -> tuple[str, str]:
+    """Resolve stage/team models from the installed helpdesk.ticket relations.
+
+    Odoo Enterprise and OCA Helpdesk use different models while sharing
+    helpdesk.ticket, so inspect that model rather than guessing from the edition.
+    """
+    ticket_fields = await api.fields_get("helpdesk.ticket", ["type", "relation"])
+    team_model = (ticket_fields.get("team_id") or {}).get("relation")
+    stage_model = (ticket_fields.get("stage_id") or {}).get("relation")
+    allowed = {
+        ("helpdesk.team", "helpdesk.stage"),
+        ("helpdesk.ticket.team", "helpdesk.ticket.stage"),
+    }
+    if (team_model, stage_model) not in allowed:
+        raise OdooApiError("This Helpdesk installation exposes unsupported team or stage models")
+    return team_model, stage_model
+
+
+async def _helpdesk_fields(api: OdooJson2, model: str, requested: list[str]) -> list[str]:
+    metadata = await api.fields_get(model, ["type", "relation"])
+    return [field for field in requested if field in metadata]
+
+
+def _require_helpdesk_fields(model: str, metadata: dict[str, Any], requested: list[str]) -> None:
+    missing = [field for field in requested if field not in metadata]
+    if missing:
+        raise ValueError(f"{model} does not support these fields: {', '.join(missing)}")
+
+
+def _helpdesk_stage_native_values(values: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    """Map stable stage inputs to each implementation's field names."""
+    result = dict(values)
+    if "mail_template_id" in result:
+        target = "mail_template_id" if "mail_template_id" in metadata else "template_id"
+        if target not in metadata:
+            raise ValueError("This Helpdesk installation does not support stage email templates")
+        result[target] = result.pop("mail_template_id")
+    if "closed" in result:
+        if "closed" in metadata:
+            pass
+        elif "fold" in metadata:
+            if "fold" in result and result["fold"] != result["closed"]:
+                raise ValueError("On this Helpdesk installation, fold and closed use the same stage setting")
+            result["fold"] = result["closed"]
+            result.pop("closed")
+        else:
+            raise ValueError("This Helpdesk installation does not support closed stages")
+    return result
+
+
+async def _require_helpdesk_mail_template(api: OdooJson2, template_id: int) -> None:
+    template_id = _positive_id(template_id, "mail_template_id")
+    fields = await api.fields_get("mail.template", ["type", "relation"])
+    if "model" in fields:
+        template = await api.read("mail.template", template_id, ["model"])
+        model_name = template.get("model")
+    elif "model_id" in fields:
+        template = await api.read("mail.template", template_id, ["model_id"])
+        model_id = _relation_id(template.get("model_id"))
+        model_name = (await api.read("ir.model", model_id, ["model"])).get("model") if model_id else None
+    else:
+        raise ValueError("Could not verify the model of the selected email template")
+    if model_name != "helpdesk.ticket":
+        raise ValueError("mail_template_id must be an email template for helpdesk.ticket")
+
+
 def _validate_lang_code(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[a-z]{2,3}(?:_[A-Z]{2}|_[0-9]{3})?(?:@[a-z]+)?", value):
         raise ValueError("lang must use Odoo res.lang.code format, for example es_ES, es_419, or sr@latin")
@@ -1159,8 +1225,11 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         domain: list = [["name", "ilike", query]] if query else []
         api = target(instance, company)
         try:
-            return await api.search_read("helpdesk.team", domain,
-                ["id", "name", "description", "company_id", "active"], _limit(limit),
+            team_model, _ = await _helpdesk_model_names(api)
+            fields = await _helpdesk_fields(api, team_model,
+                ["id", "name", "description", "company_id", "active"])
+            _require_helpdesk_fields(team_model, await api.fields_get(team_model), ["id", "name"])
+            return await api.search_read(team_model, domain, fields, _limit(limit),
                 "name asc, id asc", context={"active_test": not include_archived})
         finally:
             await api.close()
@@ -1171,11 +1240,25 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
                                    company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> list[dict[str, Any]]:
         """List Helpdesk stages and IDs, optionally only stages assigned to a team."""
         require_tool_access("list_helpdesk_stages", instance)
-        domain: list = [["team_ids", "in", [_positive_id(team_id, "team_id")]]] if team_id is not None else []
         api = target(instance, company)
         try:
-            return await api.search_read("helpdesk.stage", domain,
-                ["id", "name", "sequence", "fold", "team_ids"], _limit(limit), "sequence asc, id asc")
+            team_model, stage_model = await _helpdesk_model_names(api)
+            metadata = await api.fields_get(stage_model)
+            domain: list = []
+            if team_id is not None:
+                if "team_ids" not in metadata: raise ValueError(f"{stage_model} does not support team assignments")
+                await api.read(team_model, _positive_id(team_id, "team_id"), ["id"])
+                domain = [["team_ids", "in", [_positive_id(team_id, "team_id")]]]
+            fields = [field for field in ["id", "name", "sequence", "fold", "closed", "team_ids",
+                                          "mail_template_id", "template_id"] if field in metadata]
+            _require_helpdesk_fields(stage_model, metadata, ["id", "name"])
+            rows = await api.search_read(stage_model, domain, fields, _limit(limit), "sequence asc, id asc")
+            for row in rows:
+                if "mail_template_id" not in row:
+                    row["mail_template_id"] = row.pop("template_id", False)
+                if "closed" not in row:
+                    row["closed"] = bool(row.get("fold", False))
+            return rows
         finally:
             await api.close()
 
@@ -1191,8 +1274,11 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         if company_id is not None: values["company_id"] = _positive_id(company_id, "company_id")
         api = target(instance, company)
         try:
+            team_model, _ = await _helpdesk_model_names(api)
+            metadata = await api.fields_get(team_model)
+            _require_helpdesk_fields(team_model, metadata, ["name"] + list(values.keys() - {"name"}))
             if company_id is not None: await api.read("res.company", company_id, ["id"])
-            return {"team_id": await api.create("helpdesk.team", values)}
+            return {"team_id": await api.create(team_model, values)}
         finally:
             await api.close()
 
@@ -1213,28 +1299,48 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         team_id = _positive_id(team_id, "team_id")
         api = target(instance, company)
         try:
-            await api.read("helpdesk.team", team_id, ["id"])
+            team_model, _ = await _helpdesk_model_names(api)
+            _require_helpdesk_fields(team_model, await api.fields_get(team_model), list(values))
+            await api.read(team_model, team_id, ["id"])
             if company_id is not None: await api.read("res.company", company_id, ["id"])
-            return {"updated": await api.write("helpdesk.team", team_id, values)}
+            return {"updated": await api.write(team_model, team_id, values)}
         finally:
             await api.close()
 
     @mcp.tool()
     async def create_helpdesk_stage(instance: str, name: str, ctx: Context,
-                                    sequence: int = 10, fold: bool = False,
+                                    sequence: int = 10, fold: bool | None = None,
                                     team_ids: list[int] | None = None,
+                                    closed: bool | None = None,
+                                    mail_template_id: int | None = None,
+                                    clear_mail_template: bool = False,
                                     company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, int]:
-        """Create a Helpdesk stage. A folded stage is treated as closed in ticket reporting."""
+        """Create a stage. mail_template_id sends that email when a ticket reaches the stage.
+
+        On OCA, closed is a separate setting from fold. On Enterprise, closed maps to fold.
+        """
         require_tool_access("create_helpdesk_stage", instance)
         if not name.strip(): raise ValueError("name must not be empty")
         if isinstance(sequence, bool) or sequence < 0: raise ValueError("sequence must be zero or a positive integer")
-        values: dict[str, Any] = {"name": name.strip(), "sequence": sequence, "fold": fold}
+        values: dict[str, Any] = {"name": name.strip(), "sequence": sequence}
+        if fold is not None: values["fold"] = fold
         if team_ids is not None:
             values["team_ids"] = [[6, 0, [_positive_id(item, "team_id") for item in team_ids]]]
+        if closed is not None: values["closed"] = closed
+        if mail_template_id is not None and clear_mail_template:
+            raise ValueError("Use either mail_template_id or clear_mail_template, not both")
+        if mail_template_id is not None: values["mail_template_id"] = _positive_id(mail_template_id, "mail_template_id")
+        if clear_mail_template: values["mail_template_id"] = False
         api = target(instance, company)
         try:
-            for team_id in team_ids or []: await api.read("helpdesk.team", _positive_id(team_id, "team_id"), ["id"])
-            return {"stage_id": await api.create("helpdesk.stage", values)}
+            team_model, stage_model = await _helpdesk_model_names(api)
+            metadata = await api.fields_get(stage_model)
+            values = _helpdesk_stage_native_values(values, metadata)
+            _require_helpdesk_fields(stage_model, metadata, list(values))
+            for team_id in team_ids or []: await api.read(team_model, _positive_id(team_id, "team_id"), ["id"])
+            if mail_template_id is not None:
+                await _require_helpdesk_mail_template(api, mail_template_id)
+            return {"stage_id": await api.create(stage_model, values)}
         finally:
             await api.close()
 
@@ -1242,8 +1348,14 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
     async def update_helpdesk_stage(instance: str, stage_id: int, ctx: Context,
                                     name: str | None = None, sequence: int | None = None,
                                     fold: bool | None = None, team_ids: list[int] | None = None,
+                                    closed: bool | None = None,
+                                    mail_template_id: int | None = None,
+                                    clear_mail_template: bool = False,
                                     company: Annotated[str | None, Field(description="Exact Odoo company name. Required when multiple companies are available; omit only when exactly one is available.")] = None) -> dict[str, bool]:
-        """Edit a Helpdesk stage. Setting fold=true treats tickets in it as closed in reporting."""
+        """Edit a Helpdesk stage; assigning mail_template_id sends its email on stage entry.
+
+        On OCA, closed is separate from fold. On Enterprise, closed maps to fold.
+        """
         require_tool_access("update_helpdesk_stage", instance)
         values: dict[str, Any] = {}
         if name is not None:
@@ -1255,13 +1367,24 @@ def create_server(instances: dict[str, OdooInstance] | None = None,
         if fold is not None: values["fold"] = fold
         if team_ids is not None:
             values["team_ids"] = [[6, 0, [_positive_id(item, "team_id") for item in team_ids]]]
+        if closed is not None: values["closed"] = closed
+        if mail_template_id is not None and clear_mail_template:
+            raise ValueError("Use either mail_template_id or clear_mail_template, not both")
+        if mail_template_id is not None: values["mail_template_id"] = _positive_id(mail_template_id, "mail_template_id")
+        if clear_mail_template: values["mail_template_id"] = False
         if not values: raise ValueError("Provide at least one Helpdesk stage field to update")
         stage_id = _positive_id(stage_id, "stage_id")
         api = target(instance, company)
         try:
-            await api.read("helpdesk.stage", stage_id, ["id"])
-            for team_id in team_ids or []: await api.read("helpdesk.team", _positive_id(team_id, "team_id"), ["id"])
-            return {"updated": await api.write("helpdesk.stage", stage_id, values)}
+            team_model, stage_model = await _helpdesk_model_names(api)
+            metadata = await api.fields_get(stage_model)
+            values = _helpdesk_stage_native_values(values, metadata)
+            _require_helpdesk_fields(stage_model, metadata, list(values))
+            await api.read(stage_model, stage_id, ["id"])
+            for team_id in team_ids or []: await api.read(team_model, _positive_id(team_id, "team_id"), ["id"])
+            if mail_template_id is not None:
+                await _require_helpdesk_mail_template(api, mail_template_id)
+            return {"updated": await api.write(stage_model, stage_id, values)}
         finally:
             await api.close()
 

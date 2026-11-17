@@ -49,7 +49,7 @@ Business tools accept an optional exact `company` name. The server lists compani
 
 Support-ticket tools target the `helpdesk.ticket` model and require a Helpdesk module that provides that model on the Odoo database, plus appropriate Odoo access rights for the technical user. Helpdesk is not part of every Odoo Community installation; availability depends on the installed edition/modules.
 
-Helpdesk team configuration uses `helpdesk.team`; stage configuration uses `helpdesk.stage`. Team descriptions may be shown on public ticket-submission forms. Setting a stage's `fold` value treats tickets in that stage as closed in Helpdesk reporting, so change it only when that is intended.
+Helpdesk team and stage tools detect the models related to `helpdesk.ticket`, supporting both Enterprise (`helpdesk.team`, `helpdesk.stage`) and OCA Helpdesk (`helpdesk.ticket.team`, `helpdesk.ticket.stage`). Team descriptions may be shown on public ticket-submission forms. OCA stages have a separate `closed` flag; `fold` only folds the board column. Enterprise uses `fold` for its closed-stage behavior, so the `closed` input maps to `fold` there. A stage email template sends automatically when a ticket enters that stage.
 
 Purchase tools use Odoo's standard `purchase.order` and `purchase.order.line` models. They are implemented for the configured XML-RPC path (Odoo 15/18) and JSON-2 path (Odoo 19), but still need live verification on each supported deployment. The bill operation calls Odoo's purchase invoicing action and returns the resulting draft supplier bill (`account.move` with `move_type=in_invoice`); it does not post the bill.
 
